@@ -1,0 +1,8 @@
+# build output
+/loom
+/loom.exe
+*.test
+*.out
+
+# brainstorming visual-companion mockups
+/.superpowers/

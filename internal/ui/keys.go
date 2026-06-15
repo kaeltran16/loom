@@ -1,0 +1,29 @@
+package ui
+
+// key strings as produced by tea.KeyMsg.String(); centralised so View can show them.
+const (
+	keyQuit         = "q"
+	keyQuitAlt      = "ctrl+c"
+	keyTab          = "tab"
+	keyUp           = "up"
+	keyUpAlt        = "k"
+	keyDown         = "down"
+	keyDownAlt      = "j"
+	keyMainFocus    = "l"
+	keyMainFocusAlt = "right"
+	keyListFocus    = "h"
+	keyListFocusAlt = "left"
+	keyTop          = "g"
+	keyBottom       = "G"
+	keyStage        = " "
+	keyDiscard      = "d"
+	keyEnter        = "enter"
+	keyCommit       = "c"
+	keyFetch        = "f"
+	keyPull         = "p"
+	keyPush         = "P"
+	keyHelp         = "?"
+	keyLog          = "x"
+	keyConfirm      = "y"
+	keyCancel       = "esc"
+)
