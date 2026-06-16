@@ -289,6 +289,27 @@ type errFake string
 
 func (e errFake) Error() string { return string(e) }
 
+func TestFooterBusyShowsCancelHintWhenCancelable(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.busy = true
+	m.cancelOp = func() {} // a cancelable remote op is in flight
+
+	if got := m.footer(true); !strings.Contains(got, "esc") {
+		t.Errorf("busy cancelable footer should hint esc to cancel: %q", got)
+	}
+}
+
+func TestFooterBusyWithoutCancelableOpHasNoCancelHint(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.busy = true // fast mutation, nothing to cancel
+
+	if got := m.footer(true); strings.Contains(got, "esc") {
+		t.Errorf("non-cancelable busy footer should not mention esc: %q", got)
+	}
+}
+
 func TestTopBarShowsBranchWorkflowCountsAndCommandState(t *testing.T) {
 	m := newTestModel()
 	m.branch = git.BranchInfo{Name: "main", Ahead: 2, Behind: 1}
@@ -516,6 +537,22 @@ func TestCommandLogOverlayShowsTimestampedHistoryNewestFirst(t *testing.T) {
 	fi := strings.Index(got, "10:20 git fetch")
 	if ci < 0 || fi < 0 || ci > fi {
 		t.Fatalf("expected newest-first order, commit@%d fetch@%d:\n%s", ci, fi, got)
+	}
+}
+
+func TestCommandLogOverlayShowsOutput(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 80, 24
+	m.cmdLog = []cmdEntry{
+		{at: time.Date(2026, 6, 11, 10, 22, 0, 0, time.UTC), text: "git push", output: "Everything up-to-date"},
+	}
+
+	got := m.commandLogOverlay()
+	if !strings.Contains(got, "git push") {
+		t.Fatalf("overlay missing command line:\n%s", got)
+	}
+	if !strings.Contains(got, "Everything up-to-date") {
+		t.Fatalf("overlay should render the command output:\n%s", got)
 	}
 }
 

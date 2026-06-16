@@ -38,27 +38,27 @@ func loadCommits(ctx context.Context, repo *git.Repo) tea.Cmd {
 	}
 }
 
-func loadDiff(ctx context.Context, repo *git.Repo, path string, staged bool) tea.Cmd {
+func loadDiff(ctx context.Context, repo *git.Repo, path string, staged bool, seq int) tea.Cmd {
 	return func() tea.Msg {
 		text, err := repo.Diff(ctx, path, staged)
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffLoadedMsg{text: text}
+		return diffLoadedMsg{text: text, seq: seq}
 	}
 }
 
-func loadShow(ctx context.Context, repo *git.Repo, hash string) tea.Cmd {
+func loadShow(ctx context.Context, repo *git.Repo, hash string, seq int) tea.Cmd {
 	return func() tea.Msg {
 		text, err := repo.Show(ctx, hash)
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffLoadedMsg{text: text}
+		return diffLoadedMsg{text: text, seq: seq}
 	}
 }
 
-func loadBranchLog(ctx context.Context, repo *git.Repo, name string) tea.Cmd {
+func loadBranchLog(ctx context.Context, repo *git.Repo, name string, seq int) tea.Cmd {
 	return func() tea.Msg {
 		cs, err := repo.Log(ctx, name, 50)
 		if err != nil {
@@ -69,7 +69,7 @@ func loadBranchLog(ctx context.Context, repo *git.Repo, name string) tea.Cmd {
 		for _, c := range cs {
 			text += c.Hash[:7] + "  " + c.Subject + "\n"
 		}
-		return diffLoadedMsg{text: text}
+		return diffLoadedMsg{text: text, seq: seq}
 	}
 }
 
@@ -92,22 +92,30 @@ func commitAll(ctx context.Context, repo *git.Repo, msg string) tea.Cmd {
 	return mutation("git add -A && git commit", func() error { return repo.CommitAll(ctx, msg) })
 }
 
+// remoteFunc builds a remote-op command bound to a (cancelable) context.
+type remoteFunc func(ctx context.Context, repo *git.Repo) tea.Cmd
+
 func fetch(ctx context.Context, repo *git.Repo) tea.Cmd {
-	return remoteOp("git fetch", func() (string, error) { return repo.Fetch(ctx) })
+	return remoteOp(ctx, "git fetch", func() (string, error) { return repo.Fetch(ctx) })
 }
 func pull(ctx context.Context, repo *git.Repo) tea.Cmd {
-	return remoteOp("git pull", func() (string, error) { return repo.Pull(ctx) })
+	return remoteOp(ctx, "git pull", func() (string, error) { return repo.Pull(ctx) })
 }
 func push(ctx context.Context, repo *git.Repo) tea.Cmd {
-	return remoteOp("git push", func() (string, error) { return repo.Push(ctx) })
+	return remoteOp(ctx, "git push", func() (string, error) { return repo.Push(ctx) })
 }
 
 func mutation(label string, fn func() error) tea.Cmd {
 	return func() tea.Msg { return gitDoneMsg{cmd: label, err: fn()} }
 }
-func remoteOp(label string, fn func() (string, error)) tea.Cmd {
+func remoteOp(ctx context.Context, label string, fn func() (string, error)) tea.Cmd {
 	return func() tea.Msg {
 		out, err := fn()
+		// a canceled context means the user aborted; report that, not the
+		// resulting process error (which is platform-specific, e.g. "signal: killed")
+		if ctx.Err() != nil {
+			return gitDoneMsg{cmd: label, output: out, canceled: true}
+		}
 		return gitDoneMsg{cmd: label, output: out, err: err}
 	}
 }

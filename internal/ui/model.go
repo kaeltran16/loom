@@ -30,10 +30,13 @@ const (
 	ModeConfirming
 )
 
-// cmdEntry is one git command we ran, with when it completed.
+// cmdEntry is one git command we ran, with when it completed and any output
+// it produced (remote ops carry git's combined stdout+stderr; fast mutations
+// carry none).
 type cmdEntry struct {
-	at   time.Time
-	text string
+	at     time.Time
+	text   string
+	output string
 }
 
 // Model is the entire application state.
@@ -60,6 +63,8 @@ type Model struct {
 	err         error
 	w, h        int
 	listHeight  int
+	reqSeq      int                // monotonic token stamped on each main-pane load
+	cancelOp    context.CancelFunc // cancels the in-flight remote op; nil when none
 }
 
 // confirmReq describes a pending destructive action awaiting [y/n].

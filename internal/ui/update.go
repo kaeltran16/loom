@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -18,7 +20,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusLoadedMsg:
 		m.files, m.err = msg.files, nil
 		m.branch = msg.branch
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case branchesLoadedMsg:
 		m.branches = msg.branches
 		return m, nil
@@ -26,7 +28,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commits = msg.commits
 		return m, nil
 	case diffLoadedMsg:
-		m.viewport.SetContent(msg.text)
+		// drop responses for a selection we've already navigated away from
+		if msg.seq == m.reqSeq {
+			m.viewport.SetContent(msg.text)
+		}
 		return m, nil
 	case errMsg:
 		m.err = msg.err
@@ -35,8 +40,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case gitDoneMsg:
 		m.busy = false
-		m.cmdLog = append(m.cmdLog, cmdEntry{at: time.Now(), text: msg.cmd})
-		if msg.err != nil {
+		m.cancelOp = nil
+		text := msg.cmd
+		if msg.canceled {
+			text += " (canceled)"
+		}
+		m.cmdLog = append(m.cmdLog, cmdEntry{at: time.Now(), text: text, output: msg.output})
+		switch {
+		case msg.canceled:
+			m.err = nil
+			return m, nil
+		case msg.err != nil && msg.output != "":
+			// remote op: keep the footer/rail one line; git's real reason lives in the command log
+			m.err = fmt.Errorf("%s failed — press %s for details", msg.cmd, keyLog)
+			return m, nil
+		case msg.err != nil:
 			m.err = msg.err
 			return m, nil
 		}
@@ -103,22 +121,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyQuit, keyQuitAlt:
 		return m, tea.Quit
+	case keyCancel:
+		// abort an in-flight remote op; harmless no-op otherwise
+		if m.busy && m.cancelOp != nil {
+			m.cancelOp()
+		}
+		return m, nil
 	case keyTab:
 		m.focus = (m.focus + 1) % panelCount
 		m.mainFocused = false
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case "1":
 		m.focus = PanelFiles
 		m.mainFocused = false
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case "2":
 		m.focus = PanelBranches
 		m.mainFocused = false
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case "3":
 		m.focus = PanelCommits
 		m.mainFocused = false
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case keyMainFocus, keyMainFocusAlt:
 		m.mainFocused = true
 		return m, nil
@@ -131,14 +155,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.moveCursor(1)
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case keyUp, keyUpAlt:
 		if m.mainFocused {
 			m.viewport.LineUp(1)
 			return m, nil
 		}
 		m.moveCursor(-1)
-		return m, m.loadMainForSelection()
+		return m.reloadMain()
 	case keyTop:
 		if m.mainFocused {
 			m.viewport.GotoTop()
@@ -158,14 +182,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, nil
 	case keyFetch:
-		m.busy = true
-		return m, fetch(m.ctx, m.repo)
+		return m.startRemote(fetch)
 	case keyPull:
-		m.busy = true
-		return m, pull(m.ctx, m.repo)
+		return m.startRemote(pull)
 	case keyPush:
-		m.busy = true
-		return m, push(m.ctx, m.repo)
+		return m.startRemote(push)
 	case keyLog:
 		m.showLog = !m.showLog
 		m.showHelp = false
@@ -185,6 +206,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// startRemote dispatches a long-running remote op under a cancelable child
+// context and stores its cancel func so esc can abort it while busy.
+func (m Model) startRemote(build remoteFunc) (tea.Model, tea.Cmd) {
+	opCtx, cancel := context.WithCancel(m.ctx)
+	m.cancelOp = cancel
+	m.busy = true
+	return m, build(opCtx, m.repo)
 }
 
 func (m Model) stageSelected() (tea.Model, tea.Cmd) {
@@ -269,21 +299,29 @@ func (m Model) focusLen() int {
 	return 0
 }
 
-// loadMainForSelection returns a Cmd to refresh the main pane for the current selection.
+// reloadMain bumps the request token so any in-flight load for the prior
+// selection is dropped as stale, then loads the main pane for the new one.
+func (m Model) reloadMain() (Model, tea.Cmd) {
+	m.reqSeq++
+	return m, m.loadMainForSelection()
+}
+
+// loadMainForSelection returns a Cmd to refresh the main pane for the current
+// selection, stamped with the current request token.
 func (m Model) loadMainForSelection() tea.Cmd {
 	switch m.focus {
 	case PanelFiles:
 		if i := m.cursor[PanelFiles]; i < len(m.files) {
 			f := m.files[i]
-			return loadDiff(m.ctx, m.repo, f.Path, f.IsStaged())
+			return loadDiff(m.ctx, m.repo, f.Path, f.IsStaged(), m.reqSeq)
 		}
 	case PanelCommits:
 		if i := m.cursor[PanelCommits]; i < len(m.commits) {
-			return loadShow(m.ctx, m.repo, m.commits[i].Hash)
+			return loadShow(m.ctx, m.repo, m.commits[i].Hash, m.reqSeq)
 		}
 	case PanelBranches:
 		if i := m.cursor[PanelBranches]; i < len(m.branches) {
-			return loadBranchLog(m.ctx, m.repo, m.branches[i].Name)
+			return loadBranchLog(m.ctx, m.repo, m.branches[i].Name, m.reqSeq)
 		}
 	}
 	return nil

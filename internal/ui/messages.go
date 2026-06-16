@@ -8,10 +8,14 @@ type statusLoadedMsg struct {
 }
 type branchesLoadedMsg struct{ branches []git.Branch }
 type commitsLoadedMsg struct{ commits []git.Commit }
-type diffLoadedMsg struct{ text string }
+type diffLoadedMsg struct {
+	text string
+	seq  int // request token; the handler drops responses whose seq is stale
+}
 type gitDoneMsg struct {
-	cmd    string
-	output string
-	err    error
+	cmd      string
+	output   string
+	err      error
+	canceled bool // true when the user aborted the op via esc
 }
 type errMsg struct{ err error }

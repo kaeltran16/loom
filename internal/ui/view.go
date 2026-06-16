@@ -95,6 +95,7 @@ func (m Model) helpOverlay() string {
 		"enter           switch branch",
 		"c               commit (Ctrl-D send, Esc cancel)",
 		"f / p / P       fetch / pull / push",
+		"esc             cancel a running fetch / pull / push",
 		"x               command log",
 		"? / q           close help / quit",
 	}, "\n")
@@ -107,7 +108,13 @@ func (m Model) commandLogOverlay() string {
 		lines = append(lines, mutedStyle.Render("no commands run yet"))
 	} else {
 		for i := len(m.cmdLog) - 1; i >= 0; i-- {
-			lines = append(lines, formatCmdEntry(m.cmdLog[i]))
+			e := m.cmdLog[i]
+			lines = append(lines, formatCmdEntry(e))
+			if e.output != "" {
+				for _, ol := range strings.Split(strings.TrimRight(e.output, "\n"), "\n") {
+					lines = append(lines, mutedStyle.Render("    "+ol))
+				}
+			}
 		}
 	}
 	return borderFocused.Width(m.w - 2).Height(m.h - 2).Render(strings.Join(lines, "\n"))
@@ -457,7 +464,11 @@ func (m Model) footer(railVisible bool) string {
 	actions := m.styledFooterActions()
 	switch {
 	case m.busy:
-		return m.spinner.View() + " working…   " + actions
+		hint := ""
+		if m.cancelOp != nil {
+			hint = accentStyle.Render(" esc") + mutedStyle.Render(" cancel")
+		}
+		return m.spinner.View() + " working…" + hint + "   " + actions
 	case !railVisible && m.err != nil:
 		return delStyle.Render("error: "+m.err.Error()) + "   " + actions
 	default:

@@ -106,6 +106,75 @@ func TestUpdate_GitDoneClearsBusyAndChainsRefresh(t *testing.T) {
 	}
 }
 
+func TestUpdate_GitDoneStoresRemoteOutput(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	updated, _ := m.Update(gitDoneMsg{cmd: "git push", output: "Everything up-to-date"})
+	got := updated.(Model)
+	if len(got.cmdLog) != 1 {
+		t.Fatalf("cmdLog len = %d, want 1", len(got.cmdLog))
+	}
+	if got.cmdLog[0].output != "Everything up-to-date" {
+		t.Errorf("cmdLog output = %q, want %q", got.cmdLog[0].output, "Everything up-to-date")
+	}
+}
+
+func TestUpdate_RemoteFailureSetsConcisePointerError(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	updated, _ := m.Update(gitDoneMsg{
+		cmd:    "git push",
+		output: "! [rejected] main -> main (fetch first)\nerror: failed to push some refs",
+		err:    errFake("git push: exit status 1"),
+	})
+	got := updated.(Model)
+	if got.err == nil {
+		t.Fatal("expected an error after a failed remote op")
+	}
+	msg := got.err.Error()
+	if !strings.Contains(msg, "git push") {
+		t.Errorf("error %q should name the command", msg)
+	}
+	if !strings.Contains(msg, "press "+keyLog) {
+		t.Errorf("error %q should point to the command-log key %q", msg, keyLog)
+	}
+	if strings.Contains(msg, "\n") {
+		t.Errorf("footer/rail error must stay single-line, got %q", msg)
+	}
+}
+
+func TestUpdate_MutationFailureKeepsRawError(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	// a fast mutation carries no output; its concise git error should pass through
+	updated, _ := m.Update(gitDoneMsg{cmd: "git restore a.go", err: errFake("git restore: pathspec error")})
+	if got := updated.(Model).err; got == nil || got.Error() != "git restore: pathspec error" {
+		t.Errorf("mutation error = %v, want the raw git error", got)
+	}
+}
+
+func TestUpdate_CanceledRemoteOpClearsBusyWithoutError(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	_, cancel := context.WithCancel(context.Background())
+	m.cancelOp = cancel
+
+	updated, _ := m.Update(gitDoneMsg{cmd: "git fetch", canceled: true})
+	got := updated.(Model)
+	if got.busy {
+		t.Error("expected busy=false after a canceled op")
+	}
+	if got.err != nil {
+		t.Errorf("a canceled op should not set an error, got %v", got.err)
+	}
+	if got.cancelOp != nil {
+		t.Error("expected cancelOp cleared after the op completes")
+	}
+	if len(got.cmdLog) != 1 || !strings.Contains(got.cmdLog[0].text, "canceled") {
+		t.Errorf("expected the log entry to note cancellation: %+v", got.cmdLog)
+	}
+}
+
 func TestUpdate_CEntersCommitting(t *testing.T) {
 	m := newTestModel()
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
@@ -187,6 +256,43 @@ func TestUpdate_CommitEscCancels(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if updated.(Model).mode != ModeNormal {
 		t.Error("expected ModeNormal after esc")
+	}
+}
+
+func TestUpdate_EscWhileBusyCancelsRemoteOp(t *testing.T) {
+	m := newTestModel()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.busy = true
+	m.cancelOp = cancel
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if ctx.Err() == nil {
+		t.Error("esc while busy should cancel the in-flight remote op's context")
+	}
+}
+
+func TestUpdate_EscWithoutCancelableOpIsNoop(t *testing.T) {
+	m := newTestModel()
+	m.busy = true // a fast mutation set busy but stored no cancel func
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !updated.(Model).busy {
+		t.Error("esc with no cancelable op should leave state unchanged (no panic, still busy)")
+	}
+}
+
+func TestUpdate_RemoteOpStoresCancelFunc(t *testing.T) {
+	m := newTestModel()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	got := updated.(Model)
+	if !got.busy {
+		t.Error("expected busy=true on fetch")
+	}
+	if got.cancelOp == nil {
+		t.Error("expected a cancel func stored for the in-flight remote op")
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch cmd")
 	}
 }
 
@@ -312,6 +418,54 @@ func TestUpdate_SwitchingPanelReturnsFocusToList(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if updated.(Model).mainFocused {
 		t.Fatal("expected mainFocused=false after Tab switches panel")
+	}
+}
+
+func TestUpdate_SelectionLoadStampsAdvancingSeq(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.files = []git.FileStatus{{Path: "a"}, {Path: "b"}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a diff-load cmd after moving the cursor")
+	}
+	if got.reqSeq == 0 {
+		t.Fatal("expected reqSeq to advance past zero on a new selection load")
+	}
+	msg, ok := cmd().(diffLoadedMsg)
+	if !ok {
+		t.Fatalf("expected diffLoadedMsg, got %T", cmd())
+	}
+	if msg.seq != got.reqSeq {
+		t.Errorf("dispatched seq = %d, want current reqSeq = %d", msg.seq, got.reqSeq)
+	}
+}
+
+func TestUpdate_CurrentDiffResponseApplied(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 80, 24
+	m.layout()
+	m.reqSeq = 5
+
+	updated, _ := m.Update(diffLoadedMsg{text: "FRESH", seq: 5})
+
+	if !strings.Contains(updated.(Model).viewport.View(), "FRESH") {
+		t.Error("diff response matching the current token should update the viewport")
+	}
+}
+
+func TestUpdate_StaleDiffResponseIgnored(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 80, 24
+	m.layout()
+	m.reqSeq = 5 // a newer request has already been issued
+
+	updated, _ := m.Update(diffLoadedMsg{text: "STALE", seq: 4})
+
+	if strings.Contains(updated.(Model).viewport.View(), "STALE") {
+		t.Error("stale diff response (seq 4 < current 5) should not update the viewport")
 	}
 }
 
