@@ -715,3 +715,11 @@ func TestUpdate_AmendPushedConfirmYDispatchesAmend(t *testing.T) {
 		t.Errorf("expected git commit --amend gitDoneMsg after y, got %#v", cmd())
 	}
 }
+
+func TestUpdate_StatusLoadedSetsMerging(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(statusLoadedMsg{merging: true})
+	if !updated.(Model).merging {
+		t.Error("expected merging=true after statusLoadedMsg{merging:true}")
+	}
+}

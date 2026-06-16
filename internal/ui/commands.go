@@ -16,7 +16,8 @@ func loadStatus(ctx context.Context, repo *git.Repo) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return statusLoadedMsg{files: files, branch: branch}
+		merging, _ := repo.Merging(ctx)
+		return statusLoadedMsg{files: files, branch: branch, merging: merging}
 	}
 }
 

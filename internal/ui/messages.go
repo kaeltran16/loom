@@ -3,8 +3,9 @@ package ui
 import "github.com/kael02/loom/internal/git"
 
 type statusLoadedMsg struct {
-	files  []git.FileStatus
-	branch git.BranchInfo
+	files   []git.FileStatus
+	branch  git.BranchInfo
+	merging bool
 }
 type branchesLoadedMsg struct{ branches []git.Branch }
 type commitsLoadedMsg struct{ commits []git.Commit }

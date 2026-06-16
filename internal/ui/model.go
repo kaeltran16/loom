@@ -74,6 +74,7 @@ type Model struct {
 	mode        Mode
 	confirm     confirmReq
 	busy        bool
+	merging     bool // a merge is in progress (MERGE_HEAD exists)
 	cmdLog      []cmdEntry
 	showLog     bool
 	showHelp    bool

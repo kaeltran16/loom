@@ -22,6 +22,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusLoadedMsg:
 		m.files, m.err = msg.files, nil
 		m.branch = msg.branch
+		m.merging = msg.merging
 		return m.reloadMain()
 	case branchesLoadedMsg:
 		m.branches = msg.branches
