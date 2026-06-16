@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const mainHeaderHeight = 3
@@ -48,43 +49,32 @@ func (m Model) View() string {
 	if listOuter < listMinWidth {
 		listOuter = listMinWidth
 	}
-	mainOuter := m.w - listOuter - railOuter
-	if mainOuter < 0 {
-		mainOuter = 0
-	}
-
 	list := m.renderPanel(panelTitle(panelName(m.focus), m.focusLen()), m.focus, m.panelLines(m.focus), listOuter, bodyH)
 
 	mainStyle := borderBlur
 	if m.mainFocused {
 		mainStyle = borderFocused
 	}
-	mainInnerW := mainOuter - mainStyle.GetHorizontalFrameSize()
-	if mainInnerW < 0 {
-		mainInnerW = 0
-	}
-	mainInnerH := bodyH - mainStyle.GetVerticalFrameSize()
-	if mainInnerH < 0 {
-		mainInnerH = 0
-	}
+	// mainViewportSize is the single source of truth for the main viewport's
+	// inner dimensions; layout() sizes the persisted viewport to the same value,
+	// so the render width always equals the display width. The border content
+	// height is vpH plus the in-pane header lines.
+	vpW, vpH := m.mainViewportSize()
 	vm := m
 	if vm.mode == ModeCommitting {
 		// fill the pane: header above the input is 4 lines (heading, scope
 		// hint, key hint, blank), the rest is the editor.
-		vm.input.SetWidth(mainInnerW)
-		inputH := mainInnerH - commitHeaderHeight
+		vm.input.SetWidth(vpW)
+		inputH := vpH + mainHeaderHeight - commitHeaderHeight
 		if inputH < 1 {
 			inputH = 1
 		}
 		vm.input.SetHeight(inputH)
 	} else {
-		vm.viewport.Width = mainInnerW
-		vm.viewport.Height = mainInnerH - mainHeaderHeight
-		if vm.viewport.Height < 0 {
-			vm.viewport.Height = 0
-		}
+		vm.viewport.Width = vpW
+		vm.viewport.Height = vpH
 	}
-	main := mainStyle.Width(mainInnerW).Height(mainInnerH).MaxHeight(bodyH).Render(vm.mainContent())
+	main := mainStyle.Width(vpW).Height(vpH + mainHeaderHeight).MaxHeight(bodyH).Render(vm.mainContent())
 
 	cols := []string{list, main}
 	if railVisible {
@@ -102,6 +92,7 @@ func (m Model) helpOverlay() string {
 		"1/2/3 or Tab   focus Files / Branches / Commits",
 		"j/k or ↑/↓      move cursor (scroll the diff when in it)",
 		"g / G           diff: jump to top / bottom",
+		"n / N           diff: next / prev hunk",
 		"l / h           enter diff pane / back to list",
 		"space           stage / unstage file",
 		"d               discard (confirm y)",
@@ -337,10 +328,10 @@ func (m Model) mainContent() string {
 		title += strings.Repeat(" ", pad) + mutedStyle.Render(status)
 	}
 	body := m.viewport.View()
-	if strings.TrimSpace(body) == "" {
+	if strings.TrimSpace(ansi.Strip(body)) == "" {
 		body = m.emptyMainBody()
 	}
-	return title + "\n" + mutedStyle.Render(strings.Repeat("─", lipgloss.Width(title))) + "\n\n" + colorizeDiff(body)
+	return title + "\n" + mutedStyle.Render(strings.Repeat("─", lipgloss.Width(title))) + "\n\n" + body
 }
 
 // scrollStatus is a compact main-pane position cue: arrows for hidden content
@@ -433,7 +424,7 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 		return "Commit", []keyHint{{"ctrl+d", "submit"}, {"esc", "cancel"}}
 	}
 	if m.mainFocused {
-		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}
+		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"n/N", "hunk"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}
 	}
 	switch m.focus {
 	case PanelFiles:

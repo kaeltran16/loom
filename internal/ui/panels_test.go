@@ -105,31 +105,6 @@ func TestMarkerColor(t *testing.T) {
 	}
 }
 
-func TestClassifyDiffLine(t *testing.T) {
-	tests := []struct {
-		line string
-		want diffKind
-	}{
-		{"@@ -10,6 +10,9 @@ func View()", kindHunk},
-		{"+new line", kindAdd},
-		{"-old line", kindDel},
-		{"+++ b/view.go", kindMeta},
-		{"--- a/view.go", kindMeta},
-		{"diff --git a/view.go b/view.go", kindMeta},
-		{"index 1234567..89abcde 100644", kindMeta},
-		{"commit 0d1ac66cafef00d", kindMeta},
-		{"Author: Kael <k@example.com>", kindMeta},
-		{"Date:   Wed Jun 11 10:00:00 2026", kindMeta},
-		{" context line", kindContext},
-		{"", kindContext},
-	}
-	for _, tt := range tests {
-		if got := classifyDiffLine(tt.line); got != tt.want {
-			t.Errorf("classifyDiffLine(%q) = %v, want %v", tt.line, got, tt.want)
-		}
-	}
-}
-
 func TestRenderPanelShowsOverflowHint(t *testing.T) {
 	m := newTestModel()
 	m.focus = PanelFiles

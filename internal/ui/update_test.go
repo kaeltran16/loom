@@ -22,6 +22,19 @@ func TestUpdate_WindowSizeStoresDimensions(t *testing.T) {
 	}
 }
 
+func TestLayoutSizesViewportToMainViewportSize(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	wantW, wantH := m.mainViewportSize()
+	if m.viewport.Width != wantW || m.viewport.Height != wantH {
+		t.Fatalf("viewport = %dx%d, want %dx%d", m.viewport.Width, m.viewport.Height, wantW, wantH)
+	}
+	if wantW <= 0 || wantH <= 0 {
+		t.Fatalf("expected a positive viewport at 120x40, got %dx%d", wantW, wantH)
+	}
+}
+
 func TestUpdate_StatusLoadedPopulatesFiles(t *testing.T) {
 	m := newTestModel()
 	updated, _ := m.Update(statusLoadedMsg{
@@ -443,13 +456,49 @@ func TestUpdate_SelectionLoadStampsAdvancingSeq(t *testing.T) {
 	}
 }
 
+func TestUpdate_DiffLoadedRendersModel(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	d := git.Diff{Files: []git.FileDiff{{
+		Path: "x.go", Lang: "go", Adds: 1,
+		Hunks: []git.Hunk{{Lines: []git.DiffLine{{Kind: git.LineAdd, NewNo: 1, Text: "hello"}}}},
+	}}}
+	updated, _ := m.Update(diffLoadedMsg{diff: d})
+	got := updated.(Model)
+	if got.mainDiff == nil {
+		t.Fatal("mainDiff not stored")
+	}
+	if !strings.Contains(got.viewport.View(), "hello") {
+		t.Fatalf("viewport missing rendered content:\n%s", got.viewport.View())
+	}
+}
+
+func TestUpdate_LogLoadedSetsText(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	updated, _ := m.Update(logLoadedMsg{text: "abc123  first commit"})
+	got := updated.(Model)
+	if got.mainDiff != nil {
+		t.Fatal("mainDiff should be nil for the log path")
+	}
+	if !strings.Contains(got.viewport.View(), "first commit") {
+		t.Fatalf("viewport missing log text:\n%s", got.viewport.View())
+	}
+}
+
 func TestUpdate_CurrentDiffResponseApplied(t *testing.T) {
 	m := newTestModel()
 	m.w, m.h = 80, 24
 	m.layout()
 	m.reqSeq = 5
 
-	updated, _ := m.Update(diffLoadedMsg{text: "FRESH", seq: 5})
+	d := git.Diff{Files: []git.FileDiff{{
+		Path: "x.go", Lang: "go", Adds: 1,
+		Hunks: []git.Hunk{{Lines: []git.DiffLine{{Kind: git.LineAdd, NewNo: 1, Text: "FRESH"}}}},
+	}}}
+	updated, _ := m.Update(diffLoadedMsg{diff: d, seq: 5})
 
 	if !strings.Contains(updated.(Model).viewport.View(), "FRESH") {
 		t.Error("diff response matching the current token should update the viewport")
@@ -462,10 +511,48 @@ func TestUpdate_StaleDiffResponseIgnored(t *testing.T) {
 	m.layout()
 	m.reqSeq = 5 // a newer request has already been issued
 
-	updated, _ := m.Update(diffLoadedMsg{text: "STALE", seq: 4})
+	d := git.Diff{Files: []git.FileDiff{{
+		Path: "x.go", Lang: "go", Adds: 1,
+		Hunks: []git.Hunk{{Lines: []git.DiffLine{{Kind: git.LineAdd, NewNo: 1, Text: "STALE"}}}},
+	}}}
+	updated, _ := m.Update(diffLoadedMsg{diff: d, seq: 4})
 
 	if strings.Contains(updated.(Model).viewport.View(), "STALE") {
 		t.Error("stale diff response (seq 4 < current 5) should not update the viewport")
+	}
+}
+
+func TestUpdate_NAndNJumpBetweenHunks(t *testing.T) {
+	m := newTestModel()
+	m.mainDiff = &git.Diff{} // non-nil: hunk nav is enabled
+	m.hunkRows = []int{2, 8}
+	m.viewport.Height = 4
+	m.viewport.SetContent(strings.Repeat("x\n", 30))
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if off := next.(Model).viewport.YOffset; off != 2 {
+		t.Fatalf("after n: YOffset = %d, want 2", off)
+	}
+
+	mid := next.(Model)
+	next2, _ := mid.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if off := next2.(Model).viewport.YOffset; off != 8 {
+		t.Fatalf("after second n: YOffset = %d, want 8", off)
+	}
+
+	prev, _ := next2.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("N")})
+	if off := prev.(Model).viewport.YOffset; off != 2 {
+		t.Fatalf("after N: YOffset = %d, want 2", off)
+	}
+}
+
+func TestNextPrevOffsetClamp(t *testing.T) {
+	rows := []int{1, 10, 20}
+	if got := nextOffset(rows, 20); got != 20 {
+		t.Errorf("nextOffset past last = %d, want 20", got)
+	}
+	if got := prevOffset(rows, 1); got != 1 {
+		t.Errorf("prevOffset before first = %d, want 1", got)
 	}
 }
 

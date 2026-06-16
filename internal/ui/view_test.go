@@ -263,7 +263,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 				m.focus = PanelFiles
 				m.mainFocused = true
 			},
-			want: "Diff: j/k scroll · g/G top/bot · h back · ? help · q quit",
+			want: "Diff: j/k scroll · g/G top/bot · n/N hunk · h back · ? help · q quit",
 		},
 	}
 

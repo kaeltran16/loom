@@ -26,7 +26,6 @@ var (
 	addStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	delStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	hunkStyle   = lipgloss.NewStyle().Foreground(accentColor)
 	accentStyle = lipgloss.NewStyle().Foreground(accentColor)
 	titleStyle  = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 	strongStyle = lipgloss.NewStyle().Bold(true)
@@ -255,65 +254,4 @@ func commitLine(c git.Commit) string {
 		h = h[:7]
 	}
 	return fmt.Sprintf("%s %s", h, c.Subject)
-}
-
-// diffKind classifies one line of diff/show output for styling.
-type diffKind int
-
-const (
-	kindContext diffKind = iota
-	kindAdd
-	kindDel
-	kindHunk
-	kindMeta
-)
-
-// diffMetaPrefixes mark structural/metadata lines in diff and `git show` output.
-var diffMetaPrefixes = []string{
-	"diff --git", "index ", "--- ", "+++ ",
-	"old mode", "new mode", "new file mode", "deleted file mode",
-	"rename ", "similarity ", "copy ",
-	"commit ", "Author:", "AuthorDate:", "Commit:", "CommitDate:", "Date:", "Merge:",
-}
-
-// classifyDiffLine maps a diff/show line to its kind. Order matters: hunk and
-// metadata prefixes are checked before the bare +/- so +++/--- are not mistaken
-// for added/removed content.
-func classifyDiffLine(line string) diffKind {
-	if strings.HasPrefix(line, "@@") {
-		return kindHunk
-	}
-	for _, p := range diffMetaPrefixes {
-		if strings.HasPrefix(line, p) {
-			return kindMeta
-		}
-	}
-	switch {
-	case strings.HasPrefix(line, "+"):
-		return kindAdd
-	case strings.HasPrefix(line, "-"):
-		return kindDel
-	}
-	return kindContext
-}
-
-// colorizeDiff applies green/red to +/- lines.
-func colorizeDiff(text string) string {
-	var b strings.Builder
-	for _, line := range strings.Split(text, "\n") {
-		switch classifyDiffLine(line) {
-		case kindAdd:
-			b.WriteString(addStyle.Render(line))
-		case kindDel:
-			b.WriteString(delStyle.Render(line))
-		case kindHunk:
-			b.WriteString(hunkStyle.Render(line))
-		case kindMeta:
-			b.WriteString(mutedStyle.Render(line))
-		default:
-			b.WriteString(line)
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
 }

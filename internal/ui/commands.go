@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kael02/loom/internal/git"
@@ -38,23 +40,38 @@ func loadCommits(ctx context.Context, repo *git.Repo) tea.Cmd {
 	}
 }
 
-func loadDiff(ctx context.Context, repo *git.Repo, path string, staged bool, seq int) tea.Cmd {
+func loadDiff(ctx context.Context, repo *git.Repo, path string, staged, untracked bool, seq int) tea.Cmd {
 	return func() tea.Msg {
-		text, err := repo.Diff(ctx, path, staged)
+		if untracked {
+			full := filepath.Join(repo.Root(), path)
+			info, err := os.Stat(full)
+			if err != nil {
+				return diffLoadedMsg{diff: git.MessageDiff(path, "Cannot read file"), seq: seq}
+			}
+			if !info.Mode().IsRegular() {
+				return diffLoadedMsg{diff: git.MessageDiff(path, "Not a regular file"), seq: seq}
+			}
+			content, err := os.ReadFile(full)
+			if err != nil {
+				return diffLoadedMsg{diff: git.MessageDiff(path, "Cannot read file"), seq: seq}
+			}
+			return diffLoadedMsg{diff: git.SynthesizeUntracked(path, content), seq: seq}
+		}
+		raw, err := repo.Diff(ctx, path, staged)
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffLoadedMsg{text: text, seq: seq}
+		return diffLoadedMsg{diff: git.ParseDiff(raw), seq: seq}
 	}
 }
 
 func loadShow(ctx context.Context, repo *git.Repo, hash string, seq int) tea.Cmd {
 	return func() tea.Msg {
-		text, err := repo.Show(ctx, hash)
+		raw, err := repo.Show(ctx, hash)
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffLoadedMsg{text: text, seq: seq}
+		return diffLoadedMsg{diff: git.ParseDiff(raw), seq: seq}
 	}
 }
 
@@ -64,12 +81,11 @@ func loadBranchLog(ctx context.Context, repo *git.Repo, name string, seq int) te
 		if err != nil {
 			return errMsg{err}
 		}
-		// reuse diffLoadedMsg to render text in the main pane
 		text := ""
 		for _, c := range cs {
 			text += c.Hash[:7] + "  " + c.Subject + "\n"
 		}
-		return diffLoadedMsg{text: text, seq: seq}
+		return logLoadedMsg{text: text, seq: seq}
 	}
 }
 
