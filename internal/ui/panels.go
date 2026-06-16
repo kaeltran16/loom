@@ -57,6 +57,28 @@ func markerColor(f git.FileStatus) lipgloss.Color {
 	}
 }
 
+// conflictLabel maps a porcelain v2 unmerged code to a human description.
+func conflictLabel(code string) string {
+	switch code {
+	case "UU":
+		return "both modified"
+	case "AA":
+		return "both added"
+	case "DD":
+		return "both deleted"
+	case "AU":
+		return "added by us"
+	case "UD":
+		return "deleted by them"
+	case "UA":
+		return "added by them"
+	case "DU":
+		return "deleted by us"
+	default:
+		return "unmerged"
+	}
+}
+
 // list-row gutter: the selected row is a full-width highlight bar; other rows
 // are padded by the same gutter so columns stay aligned.
 const (

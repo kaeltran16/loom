@@ -129,7 +129,37 @@ func (m Model) topBar() string {
 		m.workflowTabs(),
 		stateStyle.Render(stateText),
 	}
+	if banner := m.mergeBanner(); banner != "" {
+		parts = append(parts, warnStyle.Render(banner))
+	}
 	return strings.Join(parts, mutedStyle.Render(" | "))
+}
+
+// mergeBanner is the top-bar merge cue: the remaining-conflict count while any
+// remain, then "ready to commit" once all are resolved but the merge commit has
+// not landed. Empty when not merging.
+func (m Model) mergeBanner() string {
+	if !m.merging {
+		return ""
+	}
+	switch n := m.unmergedCount(); n {
+	case 0:
+		return "MERGING — ready to commit"
+	case 1:
+		return "MERGING — 1 conflict"
+	default:
+		return fmt.Sprintf("MERGING — %d conflicts", n)
+	}
+}
+
+func (m Model) unmergedCount() int {
+	n := 0
+	for _, f := range m.files {
+		if f.Unmerged {
+			n++
+		}
+	}
+	return n
 }
 
 func (m Model) branchSummary() string {
@@ -211,8 +241,8 @@ func (m Model) selectedContextLines() []string {
 			actions = "actions: stage, discard"
 		}
 		if f.Unmerged {
-			state = "unmerged file"
-			actions = "actions: inspect, resolve outside loom"
+			state = "conflict: " + conflictLabel(f.Conflict)
+			actions = "actions: e edit · space resolve · A abort"
 		}
 		return []string{f.Path, state, actions}
 	case PanelBranches:
@@ -499,6 +529,9 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 	}
 	switch m.focus {
 	case PanelFiles:
+		if m.merging {
+			return "Conflict", []keyHint{{"e", "edit"}, {"space", "resolve"}, {"A", "abort"}, {"c", "commit"}}
+		}
 		return "Files", []keyHint{{"space", "stage"}, {"d", "discard"}, {"c", "commit"}, {"?", "help"}, {"q", "quit"}}
 	case PanelBranches:
 		return "Branches", []keyHint{{"enter", "switch"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}

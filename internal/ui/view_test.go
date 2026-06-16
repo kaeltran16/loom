@@ -694,3 +694,42 @@ func TestCommitEditorAmendShowsWarningWhenPushed(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeBanner(t *testing.T) {
+	m := newTestModel()
+	if got := m.mergeBanner(); got != "" {
+		t.Errorf("not merging: banner = %q, want empty", got)
+	}
+	m.merging = true
+	m.files = []git.FileStatus{{Path: "a", Unmerged: true}}
+	if got := m.mergeBanner(); got != "MERGING — 1 conflict" {
+		t.Errorf("banner = %q, want 'MERGING — 1 conflict'", got)
+	}
+	m.files = []git.FileStatus{{Path: "a", Unmerged: true}, {Path: "b", Unmerged: true}}
+	if got := m.mergeBanner(); got != "MERGING — 2 conflicts" {
+		t.Errorf("banner = %q, want 'MERGING — 2 conflicts'", got)
+	}
+	m.files = nil
+	if got := m.mergeBanner(); got != "MERGING — ready to commit" {
+		t.Errorf("banner = %q, want 'MERGING — ready to commit'", got)
+	}
+}
+
+func TestFooterConflictHints(t *testing.T) {
+	m := newTestModel()
+	m.merging = true
+	m.focus = PanelFiles
+	if got := m.footerActions(); got != "Conflict: e edit · space resolve · A abort · c commit" {
+		t.Errorf("footer = %q", got)
+	}
+}
+
+func TestSelectedContextShowsConflictKind(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.files = []git.FileStatus{{Path: "a.go", Unmerged: true, Conflict: "UU"}}
+	joined := strings.Join(m.selectedContextLines(), "\n")
+	if !strings.Contains(joined, "conflict: both modified") {
+		t.Errorf("selected context = %q, want conflict kind", joined)
+	}
+}

@@ -134,3 +134,22 @@ func TestStyledPanelLinesSelectionFillsWidth(t *testing.T) {
 		t.Fatalf("selected row width = %d, want %d (full-width bar)", w, width)
 	}
 }
+
+func TestConflictLabel(t *testing.T) {
+	cases := map[string]string{
+		"UU": "both modified",
+		"AA": "both added",
+		"DD": "both deleted",
+		"AU": "added by us",
+		"UD": "deleted by them",
+		"UA": "added by them",
+		"DU": "deleted by us",
+		"":   "unmerged",
+		"ZZ": "unmerged",
+	}
+	for code, want := range cases {
+		if got := conflictLabel(code); got != want {
+			t.Errorf("conflictLabel(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
