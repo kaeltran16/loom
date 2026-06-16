@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/kael02/loom/internal/git"
@@ -101,5 +102,13 @@ func TestMergeAbortCmd_label(t *testing.T) {
 	}
 	if msg.cmd != "git merge --abort" {
 		t.Errorf("cmd = %q, want git merge --abort", msg.cmd)
+	}
+}
+
+func TestEditorExecCmd_embedsEditorAndFile(t *testing.T) {
+	c := editorExecCmd("code --wait", "/repo/a.go")
+	joined := strings.Join(c.Args, " ")
+	if !strings.Contains(joined, "code --wait") || !strings.Contains(joined, "a.go") {
+		t.Errorf("args = %v, want editor and file embedded", c.Args)
 	}
 }

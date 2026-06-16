@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kael02/loom/internal/git"
@@ -104,6 +106,26 @@ func switchBranch(ctx context.Context, repo *git.Repo, name string) tea.Cmd {
 }
 func mergeAbort(ctx context.Context, repo *git.Repo) tea.Cmd {
 	return mutation("git merge --abort", func() error { return repo.MergeAbort(ctx) })
+}
+
+// openEditor suspends the TUI and opens the conflicted file in the user's editor
+// (the one git would use, else VS Code). On exit it yields editorDoneMsg.
+func openEditor(ctx context.Context, repo *git.Repo, path string) tea.Cmd {
+	editor := repo.EditorCommand(ctx)
+	full := filepath.Join(repo.Root(), path)
+	return tea.ExecProcess(editorExecCmd(editor, full), func(err error) tea.Msg {
+		return editorDoneMsg{err: err}
+	})
+}
+
+// editorExecCmd builds the command that opens file in editor, run through the
+// platform shell so a multi-word editor string ("code --wait") launches the same
+// way git launches core.editor.
+func editorExecCmd(editor, file string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/c", editor+` "`+file+`"`)
+	}
+	return exec.Command("sh", "-c", editor+` "$0"`, file)
 }
 func commit(ctx context.Context, repo *git.Repo, subject, full string) tea.Cmd {
 	return func() tea.Msg {

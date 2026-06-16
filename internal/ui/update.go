@@ -63,6 +63,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = false
 		return m, nil
 
+	case editorDoneMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
+		return m, loadStatus(m.ctx, m.repo)
+
 	case gitDoneMsg:
 		m.busy = false
 		m.cancelOp = nil
@@ -208,6 +216,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			action: mergeAbort(m.ctx, m.repo),
 		}
 		return m, nil
+	case keyEditConflict:
+		return m.editConflict()
 	case keyCommit:
 		m.mode = ModeCommitting
 		m.commitField = fieldSubject
@@ -319,6 +329,19 @@ func (m Model) discardSelected() (tea.Model, tea.Cmd) {
 		action: discardFile(m.ctx, m.repo, path),
 	}
 	return m, nil
+}
+
+// editConflict opens the selected file in the editor, but only when it is an
+// unmerged conflict in the Files panel.
+func (m Model) editConflict() (tea.Model, tea.Cmd) {
+	if m.focus != PanelFiles {
+		return m, nil
+	}
+	i := m.cursor[PanelFiles]
+	if i >= len(m.files) || !m.files[i].Unmerged {
+		return m, nil
+	}
+	return m, openEditor(m.ctx, m.repo, m.files[i].Path)
 }
 
 func (m *Model) moveCursor(delta int) {

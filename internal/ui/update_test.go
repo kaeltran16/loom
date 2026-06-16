@@ -747,3 +747,39 @@ func TestUpdate_AbortMergeIgnoredWhenNotMerging(t *testing.T) {
 		t.Error("A should be a no-op when not merging")
 	}
 }
+
+func TestUpdate_EditConflictDispatchesWhenUnmerged(t *testing.T) {
+	m := newTestModel()
+	m.files = []git.FileStatus{{Path: "a.go", Unmerged: true}}
+	m.focus = PanelFiles
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	if cmd == nil {
+		t.Fatal("expected an open-editor cmd for an unmerged file")
+	}
+}
+
+func TestUpdate_EditConflictNoopWhenNotUnmerged(t *testing.T) {
+	m := newTestModel()
+	m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
+	m.focus = PanelFiles
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	if cmd != nil {
+		t.Error("e on a non-conflicted file should be a no-op")
+	}
+}
+
+func TestUpdate_EditorDoneRefreshes(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(editorDoneMsg{})
+	if cmd == nil {
+		t.Error("expected a status refresh after editorDoneMsg")
+	}
+}
+
+func TestUpdate_EditorDoneErrorSurfaces(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(editorDoneMsg{err: errFake("boom")})
+	if updated.(Model).err == nil {
+		t.Error("expected err set on editor failure")
+	}
+}

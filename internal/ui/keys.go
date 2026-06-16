@@ -18,6 +18,7 @@ const (
 	keyAbortMerge   = "A"
 	keyStage        = " "
 	keyDiscard      = "d"
+	keyEditConflict = "e"
 	keyEnter        = "enter"
 	keyCommit       = "c"
 	keyAmend        = "C"

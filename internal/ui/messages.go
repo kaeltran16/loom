@@ -32,3 +32,7 @@ type amendPrefillMsg struct {
 	body    string
 	err     error
 }
+
+// editorDoneMsg reports that the external editor launched for a conflicted file
+// has exited.
+type editorDoneMsg struct{ err error }
