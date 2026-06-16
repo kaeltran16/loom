@@ -173,3 +173,40 @@ func TestRepo_HeadMessage_args(t *testing.T) {
 		t.Errorf("HeadMessage = %q, want trimmed full message", got)
 	}
 }
+
+func TestRepo_MergeAbort_args(t *testing.T) {
+	fr := &fakeRunner{}
+	if err := (&Repo{runner: fr}).MergeAbort(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"merge", "--abort"}
+	if !reflect.DeepEqual(fr.gotArgs, want) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, want)
+	}
+}
+
+func TestRepo_Merging_trueWhenRevParseSucceeds(t *testing.T) {
+	fr := &fakeRunner{}
+	got, err := (&Repo{runner: fr}).Merging(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("expected merging=true when rev-parse succeeds")
+	}
+	want := []string{"rev-parse", "--verify", "--quiet", "MERGE_HEAD"}
+	if !reflect.DeepEqual(fr.gotArgs, want) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, want)
+	}
+}
+
+func TestRepo_Merging_falseWhenRevParseFails(t *testing.T) {
+	fr := &fakeRunner{err: errors.New("no MERGE_HEAD")}
+	got, err := (&Repo{runner: fr}).Merging(context.Background())
+	if err != nil {
+		t.Fatalf("Merging should swallow the absent-ref error, got %v", err)
+	}
+	if got {
+		t.Error("expected merging=false when rev-parse fails")
+	}
+}

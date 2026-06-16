@@ -96,6 +96,19 @@ func (r *Repo) Switch(ctx context.Context, branch string) error {
 	return r.mutate(ctx, nil, "switch", branch)
 }
 
+// MergeAbort cancels an in-progress merge, restoring the pre-merge state.
+func (r *Repo) MergeAbort(ctx context.Context) error {
+	return r.mutate(ctx, nil, "merge", "--abort")
+}
+
+// Merging reports whether a merge is in progress (a MERGE_HEAD ref exists).
+// rev-parse exits non-zero when the ref is absent, which we read as "not
+// merging" rather than a failure.
+func (r *Repo) Merging(ctx context.Context) (bool, error) {
+	_, _, err := r.runner.Run(ctx, nil, "rev-parse", "--verify", "--quiet", "MERGE_HEAD")
+	return err == nil, nil
+}
+
 func (r *Repo) Commit(ctx context.Context, msg string) (string, error) {
 	return r.commitAndHash(ctx, strings.NewReader(msg), "commit", "-F", "-")
 }
