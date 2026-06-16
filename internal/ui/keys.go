@@ -15,6 +15,7 @@ const (
 	keyListFocusAlt = "left"
 	keyTop          = "g"
 	keyBottom       = "G"
+	keyAbortMerge   = "A"
 	keyStage        = " "
 	keyDiscard      = "d"
 	keyEnter        = "enter"

@@ -102,6 +102,9 @@ func discardFile(ctx context.Context, repo *git.Repo, path string) tea.Cmd {
 func switchBranch(ctx context.Context, repo *git.Repo, name string) tea.Cmd {
 	return mutation(fmt.Sprintf("git switch %s", name), func() error { return repo.Switch(ctx, name) })
 }
+func mergeAbort(ctx context.Context, repo *git.Repo) tea.Cmd {
+	return mutation("git merge --abort", func() error { return repo.MergeAbort(ctx) })
+}
 func commit(ctx context.Context, repo *git.Repo, subject, full string) tea.Cmd {
 	return func() tea.Msg {
 		hash, err := repo.Commit(ctx, full)

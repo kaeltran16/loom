@@ -198,6 +198,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.stageSelected()
 	case keyDiscard:
 		return m.discardSelected()
+	case keyAbortMerge:
+		if !m.merging {
+			return m, nil
+		}
+		m.mode = ModeConfirming
+		m.confirm = confirmReq{
+			prompt: "Abort the merge? Conflict resolutions will be discarded. [y/n]",
+			action: mergeAbort(m.ctx, m.repo),
+		}
+		return m, nil
 	case keyCommit:
 		m.mode = ModeCommitting
 		m.commitField = fieldSubject

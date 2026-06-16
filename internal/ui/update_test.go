@@ -723,3 +723,27 @@ func TestUpdate_StatusLoadedSetsMerging(t *testing.T) {
 		t.Error("expected merging=true after statusLoadedMsg{merging:true}")
 	}
 }
+
+func TestUpdate_AbortMergeEntersConfirm(t *testing.T) {
+	m := newTestModel()
+	m.merging = true
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	got := updated.(Model)
+	if got.mode != ModeConfirming {
+		t.Fatalf("mode = %v, want ModeConfirming", got.mode)
+	}
+	if got.confirm.action == nil {
+		t.Error("expected an abort action stored on the confirm request")
+	}
+	if cmd != nil {
+		t.Error("abort should not dispatch until y is pressed")
+	}
+}
+
+func TestUpdate_AbortMergeIgnoredWhenNotMerging(t *testing.T) {
+	m := newTestModel() // merging is false
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	if updated.(Model).mode != ModeNormal {
+		t.Error("A should be a no-op when not merging")
+	}
+}

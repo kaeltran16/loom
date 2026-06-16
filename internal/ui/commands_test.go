@@ -92,3 +92,14 @@ func TestCommitAmendCmd_setsNotice(t *testing.T) {
 		t.Errorf("amend msg = %#v", msg)
 	}
 }
+
+func TestMergeAbortCmd_label(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{})
+	msg := mergeAbort(context.Background(), repo)().(gitDoneMsg)
+	if msg.err != nil {
+		t.Fatalf("unexpected error: %v", msg.err)
+	}
+	if msg.cmd != "git merge --abort" {
+		t.Errorf("cmd = %q, want git merge --abort", msg.cmd)
+	}
+}
