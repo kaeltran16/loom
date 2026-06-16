@@ -31,6 +31,7 @@ loom is read-only until you act: nothing is staged, committed, or pushed without
 | `d` | discard changes (confirm with `y`) |
 | `enter` | switch to the selected branch |
 | `c` | commit (type message, `Ctrl-D` to confirm, `Esc` to cancel) |
+| `C` | amend last commit (edit message, `Ctrl-D` to confirm) |
 | `f` `p` `P` | fetch / pull / push |
 | `esc` | cancel a running fetch / pull / push |
 | `?` | help · `q` quit |

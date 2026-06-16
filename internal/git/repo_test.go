@@ -84,14 +84,16 @@ func TestRepo_WriteMethodArgs(t *testing.T) {
 	}
 }
 
-func TestRepo_CommitAll_stagesEverythingThenCommits(t *testing.T) {
-	fr := &fakeRunner{}
-	if err := (&Repo{runner: fr}).CommitAll(context.Background(), "my message"); err != nil {
+func TestRepo_CommitAll_stagesCommitsThenResolvesHash(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("a1b2c3d\n")}
+	hash, err := (&Repo{runner: fr}).CommitAll(context.Background(), "my message")
+	if err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
 		{"add", "-A"},
 		{"commit", "-F", "-"},
+		{"rev-parse", "--short", "HEAD"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
 		t.Errorf("calls = %v, want %v", fr.calls, want)
@@ -99,11 +101,14 @@ func TestRepo_CommitAll_stagesEverythingThenCommits(t *testing.T) {
 	if string(fr.gotIn) != "my message" {
 		t.Errorf("stdin = %q, want %q", fr.gotIn, "my message")
 	}
+	if hash != "a1b2c3d" {
+		t.Errorf("hash = %q, want a1b2c3d", hash)
+	}
 }
 
 func TestRepo_CommitAll_doesNotCommitWhenStageFails(t *testing.T) {
 	fr := &fakeRunner{err: errors.New("boom")}
-	err := (&Repo{runner: fr}).CommitAll(context.Background(), "msg")
+	_, err := (&Repo{runner: fr}).CommitAll(context.Background(), "msg")
 	if err == nil {
 		t.Fatal("expected error when staging fails")
 	}
@@ -112,16 +117,59 @@ func TestRepo_CommitAll_doesNotCommitWhenStageFails(t *testing.T) {
 	}
 }
 
-func TestRepo_Commit_passesMessageViaStdin(t *testing.T) {
-	fr := &fakeRunner{}
-	if err := (&Repo{runner: fr}).Commit(context.Background(), "my message"); err != nil {
+func TestRepo_Commit_passesMessageThenResolvesHash(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("a1b2c3d\n")}
+	hash, err := (&Repo{runner: fr}).Commit(context.Background(), "my message")
+	if err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"commit", "-F", "-"}
-	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
-		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	want := [][]string{
+		{"commit", "-F", "-"},
+		{"rev-parse", "--short", "HEAD"},
+	}
+	if !reflect.DeepEqual(fr.calls, want) {
+		t.Errorf("calls = %v, want %v", fr.calls, want)
 	}
 	if string(fr.gotIn) != "my message" {
 		t.Errorf("stdin = %q, want %q", fr.gotIn, "my message")
+	}
+	if hash != "a1b2c3d" {
+		t.Errorf("hash = %q, want a1b2c3d", hash)
+	}
+}
+
+func TestRepo_CommitAmend_args(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("deadbee\n")}
+	hash, err := (&Repo{runner: fr}).CommitAmend(context.Background(), "amended")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"commit", "--amend", "-F", "-"},
+		{"rev-parse", "--short", "HEAD"},
+	}
+	if !reflect.DeepEqual(fr.calls, want) {
+		t.Errorf("calls = %v, want %v", fr.calls, want)
+	}
+	if string(fr.gotIn) != "amended" {
+		t.Errorf("stdin = %q, want %q", fr.gotIn, "amended")
+	}
+	if hash != "deadbee" {
+		t.Errorf("hash = %q, want deadbee", hash)
+	}
+}
+
+func TestRepo_HeadMessage_args(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("feat: x\n\nbody line\n")}
+	got, err := (&Repo{runner: fr}).HeadMessage(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{"log", "-1", "--pretty=%B"}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+	if got != "feat: x\n\nbody line" {
+		t.Errorf("HeadMessage = %q, want trimmed full message", got)
 	}
 }

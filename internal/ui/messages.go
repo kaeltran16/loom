@@ -19,7 +19,15 @@ type logLoadedMsg struct {
 type gitDoneMsg struct {
 	cmd      string
 	output   string
+	notice   string // success line to flash (set by commit commands)
 	err      error
 	canceled bool // true when the user aborted the op via esc
 }
 type errMsg struct{ err error }
+
+// amendPrefillMsg carries HEAD's message into the editor to start an amend.
+type amendPrefillMsg struct {
+	subject string
+	body    string
+	err     error
+}

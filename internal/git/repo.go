@@ -96,17 +96,46 @@ func (r *Repo) Switch(ctx context.Context, branch string) error {
 	return r.mutate(ctx, nil, "switch", branch)
 }
 
-func (r *Repo) Commit(ctx context.Context, msg string) error {
-	return r.mutate(ctx, strings.NewReader(msg), "commit", "-F", "-")
+func (r *Repo) Commit(ctx context.Context, msg string) (string, error) {
+	return r.commitAndHash(ctx, strings.NewReader(msg), "commit", "-F", "-")
 }
 
 // CommitAll stages every change in the working tree (modified, deleted, and new
 // files) and then commits, so a commit needs no prior per-file staging.
-func (r *Repo) CommitAll(ctx context.Context, msg string) error {
+func (r *Repo) CommitAll(ctx context.Context, msg string) (string, error) {
 	if err := r.mutate(ctx, nil, "add", "-A"); err != nil {
-		return err
+		return "", err
 	}
 	return r.Commit(ctx, msg)
+}
+
+// CommitAmend rewrites HEAD with msg, folding in any already-staged changes. It
+// does not stage anything itself. Returns the resulting short hash.
+func (r *Repo) CommitAmend(ctx context.Context, msg string) (string, error) {
+	return r.commitAndHash(ctx, strings.NewReader(msg), "commit", "--amend", "-F", "-")
+}
+
+// commitAndHash runs a commit-style command, then resolves HEAD's short hash so
+// callers can confirm exactly what landed.
+func (r *Repo) commitAndHash(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
+	if err := r.mutate(ctx, stdin, args...); err != nil {
+		return "", err
+	}
+	out, errb, err := r.runner.Run(ctx, nil, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse: %w: %s", err, strings.TrimSpace(string(errb)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// HeadMessage returns HEAD's full commit message (subject and body), trimmed of
+// the trailing newline git appends.
+func (r *Repo) HeadMessage(ctx context.Context) (string, error) {
+	out, errb, err := r.runner.Run(ctx, nil, "log", "-1", "--pretty=%B")
+	if err != nil {
+		return "", fmt.Errorf("git log: %w: %s", err, strings.TrimSpace(string(errb)))
+	}
+	return strings.TrimRight(string(out), "\n"), nil
 }
 
 func (r *Repo) Fetch(ctx context.Context) (string, error) { return r.remote(ctx, "fetch") }

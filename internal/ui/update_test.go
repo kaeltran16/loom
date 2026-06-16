@@ -199,7 +199,7 @@ func TestUpdate_CEntersCommitting(t *testing.T) {
 func TestUpdate_CommitCtrlDDispatchesCommit(t *testing.T) {
 	m := newTestModel()
 	m.mode = ModeCommitting
-	m.input.SetValue("my message")
+	m.subject.SetValue("my message")
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	if updated.(Model).mode != ModeNormal {
 		t.Error("expected return to ModeNormal after commit")
@@ -234,7 +234,7 @@ func TestUpdate_CommitCtrlD_NothingStaged_CommitsAll(t *testing.T) {
 	m := newTestModel()
 	m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}} // changed but unstaged
 	m.mode = ModeCommitting
-	m.input.SetValue("msg")
+	m.subject.SetValue("msg")
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	if cmd == nil {
 		t.Fatal("expected a commit cmd")
@@ -252,7 +252,7 @@ func TestUpdate_CommitCtrlD_WithStaged_CommitsIndexOnly(t *testing.T) {
 	m := newTestModel()
 	m.files = []git.FileStatus{{Path: "a.go", Staged: 'M'}} // already staged
 	m.mode = ModeCommitting
-	m.input.SetValue("msg")
+	m.subject.SetValue("msg")
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	if cmd == nil {
 		t.Fatal("expected a commit cmd")
@@ -571,5 +571,147 @@ func TestUpdate_GAndShiftGJumpDiffToTopAndBottom(t *testing.T) {
 	top, _ := bottom.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	if !top.(Model).viewport.AtTop() {
 		t.Fatalf("after g, want viewport at top, YOffset=%d", top.(Model).viewport.YOffset)
+	}
+}
+
+func TestUpdate_CommitTabTogglesField(t *testing.T) {
+	m := newTestModel()
+	entered, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	mc := entered.(Model)
+	if mc.commitField != fieldSubject {
+		t.Fatalf("commitField after c = %d, want fieldSubject", mc.commitField)
+	}
+	toggled, _ := mc.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if toggled.(Model).commitField != fieldBody {
+		t.Errorf("commitField after Tab = %d, want fieldBody", toggled.(Model).commitField)
+	}
+	back, _ := toggled.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if back.(Model).commitField != fieldSubject {
+		t.Errorf("commitField after second Tab = %d, want fieldSubject", back.(Model).commitField)
+	}
+}
+
+func TestUpdate_CommitEmptySubjectIsNoop(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitting
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if updated.(Model).mode != ModeCommitting {
+		t.Error("empty-subject Ctrl-D should stay in the editor")
+	}
+	if cmd != nil {
+		t.Error("empty-subject Ctrl-D should not dispatch a commit")
+	}
+}
+
+func TestUpdate_GitDoneSetsNotice(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	updated, _ := m.Update(gitDoneMsg{cmd: "git commit", notice: "Committed a1b2c3d feat: x"})
+	if got := updated.(Model).notice; got != "Committed a1b2c3d feat: x" {
+		t.Errorf("notice = %q, want the success line", got)
+	}
+}
+
+func TestUpdate_NoticeClearsOnNextKey(t *testing.T) {
+	m := newTestModel()
+	m.notice = "Committed a1b2c3d feat: x"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if updated.(Model).notice != "" {
+		t.Error("notice should clear on the next key")
+	}
+}
+
+func TestUpdate_CapitalCLoadsHeadMessage(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("C")})
+	if cmd == nil {
+		t.Fatal("expected a head-message load cmd")
+	}
+	if _, ok := cmd().(amendPrefillMsg); !ok {
+		t.Errorf("expected amendPrefillMsg, got %T", cmd())
+	}
+}
+
+func TestUpdate_AmendPrefillEntersCommitting(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(amendPrefillMsg{subject: "feat: x", body: "why"})
+	got := updated.(Model)
+	if got.mode != ModeCommitting || !got.amending {
+		t.Fatalf("mode=%v amending=%v, want committing+amending", got.mode, got.amending)
+	}
+	if got.subject.Value() != "feat: x" || got.body.Value() != "why" {
+		t.Errorf("prefill = (%q,%q), want (feat: x, why)", got.subject.Value(), got.body.Value())
+	}
+}
+
+func TestUpdate_AmendPrefillErrorStaysNormal(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(amendPrefillMsg{err: errFake("no HEAD")})
+	got := updated.(Model)
+	if got.mode != ModeNormal || got.amending {
+		t.Errorf("mode=%v amending=%v, want normal/false on prefill error", got.mode, got.amending)
+	}
+}
+
+func TestUpdate_AmendSubmitPushedRoutesToConfirm(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitting
+	m.amending = true
+	m.subject.SetValue("feat: x")
+	m.branch = git.BranchInfo{Name: "main", Upstream: "origin/main", Ahead: 0}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	got := updated.(Model)
+	if got.mode != ModeConfirming {
+		t.Fatalf("mode = %v, want ModeConfirming for a pushed amend", got.mode)
+	}
+	if got.confirm.action == nil {
+		t.Error("expected the amend action stored on the confirm request")
+	}
+	if cmd != nil {
+		t.Error("the confirm should not dispatch until y is pressed")
+	}
+}
+
+func TestUpdate_AmendSubmitNotPushedDispatches(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitting
+	m.amending = true
+	m.subject.SetValue("feat: x")
+	m.branch = git.BranchInfo{Name: "main", Upstream: "origin/main", Ahead: 2}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if !updated.(Model).busy {
+		t.Error("expected busy=true on a direct amend")
+	}
+	if cmd == nil {
+		t.Fatal("expected an amend cmd")
+	}
+	if done, ok := cmd().(gitDoneMsg); !ok || done.cmd != "git commit --amend" {
+		t.Errorf("expected git commit --amend gitDoneMsg, got %#v", cmd())
+	}
+}
+
+// end-to-end safety path: a pushed amend must route through the confirm AND,
+// once confirmed with y, actually dispatch the amend command.
+func TestUpdate_AmendPushedConfirmYDispatchesAmend(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitting
+	m.amending = true
+	m.subject.SetValue("feat: x")
+	m.branch = git.BranchInfo{Name: "main", Upstream: "origin/main", Ahead: 0}
+
+	confirming, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if confirming.(Model).mode != ModeConfirming {
+		t.Fatalf("expected ModeConfirming after Ctrl-D on a pushed amend, got %v", confirming.(Model).mode)
+	}
+
+	done, cmd := confirming.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if !done.(Model).busy {
+		t.Error("expected busy=true after confirming the amend with y")
+	}
+	if cmd == nil {
+		t.Fatal("expected the amend cmd to dispatch after y")
+	}
+	if msg, ok := cmd().(gitDoneMsg); !ok || msg.cmd != "git commit --amend" {
+		t.Errorf("expected git commit --amend gitDoneMsg after y, got %#v", cmd())
 	}
 }

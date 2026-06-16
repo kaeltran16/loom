@@ -101,11 +101,44 @@ func discardFile(ctx context.Context, repo *git.Repo, path string) tea.Cmd {
 func switchBranch(ctx context.Context, repo *git.Repo, name string) tea.Cmd {
 	return mutation(fmt.Sprintf("git switch %s", name), func() error { return repo.Switch(ctx, name) })
 }
-func commit(ctx context.Context, repo *git.Repo, msg string) tea.Cmd {
-	return mutation("git commit", func() error { return repo.Commit(ctx, msg) })
+func commit(ctx context.Context, repo *git.Repo, subject, full string) tea.Cmd {
+	return func() tea.Msg {
+		hash, err := repo.Commit(ctx, full)
+		if err != nil {
+			return gitDoneMsg{cmd: "git commit", err: err}
+		}
+		return gitDoneMsg{cmd: "git commit", notice: noticeText(hash, subject)}
+	}
 }
-func commitAll(ctx context.Context, repo *git.Repo, msg string) tea.Cmd {
-	return mutation("git add -A && git commit", func() error { return repo.CommitAll(ctx, msg) })
+func loadHeadMessage(ctx context.Context, repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		full, err := repo.HeadMessage(ctx)
+		if err != nil {
+			return amendPrefillMsg{err: err}
+		}
+		subject, body := splitCommitMessage(full)
+		return amendPrefillMsg{subject: subject, body: body}
+	}
+}
+
+func commitAmend(ctx context.Context, repo *git.Repo, subject, full string) tea.Cmd {
+	return func() tea.Msg {
+		hash, err := repo.CommitAmend(ctx, full)
+		if err != nil {
+			return gitDoneMsg{cmd: "git commit --amend", err: err}
+		}
+		return gitDoneMsg{cmd: "git commit --amend", notice: noticeText(hash, subject)}
+	}
+}
+
+func commitAll(ctx context.Context, repo *git.Repo, subject, full string) tea.Cmd {
+	return func() tea.Msg {
+		hash, err := repo.CommitAll(ctx, full)
+		if err != nil {
+			return gitDoneMsg{cmd: "git add -A && git commit", err: err}
+		}
+		return gitDoneMsg{cmd: "git add -A && git commit", notice: noticeText(hash, subject)}
+	}
 }
 
 // remoteFunc builds a remote-op command bound to a (cancelable) context.

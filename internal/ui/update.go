@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -27,6 +28,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case commitsLoadedMsg:
 		m.commits = msg.commits
+		return m, nil
+	case amendPrefillMsg:
+		if msg.err != nil {
+			return m, nil // e.g. empty repo (no HEAD): stay put
+		}
+		m.amending = true
+		m.subject.SetValue(msg.subject)
+		m.body.SetValue(msg.body)
+		m.subject.CursorEnd()
+		m.mode = ModeCommitting
+		m.commitField = fieldSubject
+		m.subject.Focus()
+		m.body.Blur()
 		return m, nil
 	case diffLoadedMsg:
 		// drop responses for a selection we've already navigated away from
@@ -69,6 +83,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		m.notice = msg.notice
 		// refresh the data that a mutation could have changed
 		return m, tea.Batch(
 			loadStatus(m.ctx, m.repo),
@@ -88,6 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.notice = ""
 	if m.mode == ModeConfirming {
 		switch msg.String() {
 		case keyConfirm:
@@ -105,26 +121,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeCommitting {
 		switch msg.Type {
 		case tea.KeyCtrlD:
-			text := m.input.Value()
-			m.input.Reset()
-			m.mode = ModeNormal
-			if text == "" {
-				return m, nil
-			}
-			m.busy = true
-			// stage everything first when nothing is staged, so commit needs no
-			// prior per-file staging; otherwise commit just the staged index.
-			if m.anyStaged() {
-				return m, commit(m.ctx, m.repo, text)
-			}
-			return m, commitAll(m.ctx, m.repo, text)
+			return m.submitCommit()
 		case tea.KeyEsc:
-			m.input.Reset()
-			m.mode = ModeNormal
+			m.resetCommit()
+			return m, nil
+		case tea.KeyTab:
+			m.toggleCommitField()
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
+		if m.commitField == fieldSubject {
+			m.subject, cmd = m.subject.Update(msg)
+		} else {
+			m.body, cmd = m.body.Update(msg)
+		}
 		return m, cmd
 	}
 
@@ -189,8 +199,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.discardSelected()
 	case keyCommit:
 		m.mode = ModeCommitting
-		m.input.Focus()
+		m.commitField = fieldSubject
+		m.subject.Focus()
+		m.body.Blur()
 		return m, nil
+	case keyAmend:
+		return m, loadHeadMessage(m.ctx, m.repo)
 	case keyFetch:
 		return m.startRemote(fetch)
 	case keyPull:
@@ -371,4 +385,64 @@ func (m Model) loadMainForSelection() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *Model) toggleCommitField() {
+	if m.commitField == fieldSubject {
+		m.commitField = fieldBody
+		m.subject.Blur()
+		m.body.Focus()
+		return
+	}
+	m.commitField = fieldSubject
+	m.body.Blur()
+	m.subject.Focus()
+}
+
+func (m *Model) resetCommit() {
+	m.subject.Reset()
+	m.body.Reset()
+	m.subject.Blur()
+	m.body.Blur()
+	m.commitField = fieldSubject
+	m.amending = false
+	m.mode = ModeNormal
+}
+
+// submitCommit assembles the message and dispatches the right commit command.
+// An empty subject is a no-op so Ctrl-D never commits a blank summary. An amend
+// of an already-pushed commit is gated behind a confirm.
+func (m Model) submitCommit() (tea.Model, tea.Cmd) {
+	subject := strings.TrimSpace(m.subject.Value())
+	if subject == "" {
+		return m, nil
+	}
+	full := buildCommitMessage(m.subject.Value(), m.body.Value())
+	amending := m.amending
+	pushed := m.amendPushed()
+	m.resetCommit()
+	if amending {
+		action := commitAmend(m.ctx, m.repo, subject, full)
+		if pushed {
+			m.mode = ModeConfirming
+			m.confirm = confirmReq{
+				prompt: "Amend pushed commit? Needs a force-push. [y/n]",
+				action: action,
+			}
+			return m, nil
+		}
+		m.busy = true
+		return m, action
+	}
+	m.busy = true
+	if m.anyStaged() {
+		return m, commit(m.ctx, m.repo, subject, full)
+	}
+	return m, commitAll(m.ctx, m.repo, subject, full)
+}
+
+// amendPushed reports whether HEAD is already on the upstream, so amending it
+// would require a force-push.
+func (m Model) amendPushed() bool {
+	return m.branch.Upstream != "" && m.branch.Ahead == 0
 }

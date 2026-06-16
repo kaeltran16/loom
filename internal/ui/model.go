@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kael02/loom/internal/git"
@@ -29,6 +30,14 @@ const (
 	ModeNormal Mode = iota
 	ModeCommitting
 	ModeConfirming
+)
+
+// commitField is which editor field has focus in ModeCommitting.
+type commitField int
+
+const (
+	fieldSubject commitField = iota
+	fieldBody
 )
 
 // cmdEntry is one git command we ran, with when it completed and any output
@@ -56,7 +65,11 @@ type Model struct {
 	mainDiff    *git.Diff // non-nil when the main pane shows a parsed diff
 	mainText    string    // plain text for the branch-log path (mainDiff nil)
 	hunkRows    []int     // viewport row index of each hunk band, for n/N
-	input       textarea.Model
+	subject     textinput.Model
+	body        textarea.Model
+	commitField commitField
+	notice      string // transient success line; cleared on the next key
+	amending    bool   // the current ModeCommitting session is a git commit --amend
 	spinner     spinner.Model
 	mode        Mode
 	confirm     confirmReq
@@ -81,8 +94,10 @@ type confirmReq struct {
 func NewModel(ctx context.Context, repo *git.Repo) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	ta := textarea.New()
-	ta.Placeholder = "Commit message…"
+	subj := textinput.New()
+	subj.Placeholder = "Summary…"
+	body := textarea.New()
+	body.Placeholder = "Body (optional)…"
 	return Model{
 		ctx:      ctx,
 		repo:     repo,
@@ -90,7 +105,8 @@ func NewModel(ctx context.Context, repo *git.Repo) Model {
 		cursor:   map[Panel]int{},
 		scroll:   map[Panel]int{},
 		viewport: viewport.New(0, 0),
-		input:    ta,
+		subject:  subj,
+		body:     body,
 		spinner:  sp,
 		mode:     ModeNormal,
 	}

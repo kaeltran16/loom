@@ -10,10 +10,6 @@ import (
 
 const mainHeaderHeight = 3
 
-// commitHeaderHeight is the lines mainContent draws above the input in commit
-// mode: heading, scope hint, key hint, and a blank separator.
-const commitHeaderHeight = 4
-
 const (
 	topBarHeight      = 1
 	statusRailWidth   = 30
@@ -62,14 +58,15 @@ func (m Model) View() string {
 	vpW, vpH := m.mainViewportSize()
 	vm := m
 	if vm.mode == ModeCommitting {
-		// fill the pane: header above the input is 4 lines (heading, scope
-		// hint, key hint, blank), the rest is the editor.
-		vm.input.SetWidth(vpW)
-		inputH := vpH + mainHeaderHeight - commitHeaderHeight
-		if inputH < 1 {
-			inputH = 1
+		// fill the pane: the body textarea takes whatever the editor header
+		// (commitHeaderHeight) leaves of the pane's content height.
+		vm.subject.Width = vpW - 2
+		editorBodyH := vpH + mainHeaderHeight - vm.commitHeaderHeight()
+		if editorBodyH < 1 {
+			editorBodyH = 1
 		}
-		vm.input.SetHeight(inputH)
+		vm.body.SetWidth(vpW)
+		vm.body.SetHeight(editorBodyH)
 	} else {
 		vm.viewport.Width = vpW
 		vm.viewport.Height = vpH
@@ -98,6 +95,7 @@ func (m Model) helpOverlay() string {
 		"d               discard (confirm y)",
 		"enter           switch branch",
 		"c               commit (Ctrl-D send, Esc cancel)",
+		"C               amend last commit (edit message, Ctrl-D send, Esc cancel)",
 		"f / p / P       fetch / pull / push",
 		"esc             cancel a running fetch / pull / push",
 		"x               command log",
@@ -167,6 +165,8 @@ func (m Model) commandState() (string, lipgloss.Style) {
 		return "Error", delStyle
 	case m.busy:
 		return "Working...", warnStyle
+	case m.notice != "":
+		return m.notice, addStyle
 	default:
 		return "Ready", addStyle
 	}
@@ -310,13 +310,7 @@ func (m Model) renderStatusRail(w, h int) string {
 
 func (m Model) mainContent() string {
 	if m.mode == ModeCommitting {
-		return strings.Join([]string{
-			"Commit message",
-			mutedStyle.Render(m.commitScopeHint()),
-			mutedStyle.Render("Ctrl-D to commit, Esc to cancel"),
-			"",
-			m.input.View(),
-		}, "\n")
+		return m.commitEditorView()
 	}
 
 	title := m.mainTitle()
@@ -349,6 +343,79 @@ func (m Model) scrollStatus() string {
 		down = "↓"
 	}
 	return fmt.Sprintf("%s%s %.0f%%", up, down, m.viewport.ScrollPercent()*100)
+}
+
+// commitHeaderHeight is the number of non-body lines the commit editor draws,
+// so the body textarea can claim the rest of the pane.
+func (m Model) commitHeaderHeight() int {
+	h := 9
+	if m.amending && m.amendPushed() {
+		h++ // the force-push warning row
+	}
+	return h
+}
+
+func (m Model) commitEditorView() string {
+	heading := "Commit message"
+	scope := m.commitScopeHint()
+	verb := "commit"
+	if m.amending {
+		heading = "Amend commit"
+		scope = m.amendScopeHint()
+		verb = "amend"
+	}
+
+	n := len([]rune(strings.TrimSpace(m.subject.Value())))
+	counter := counterStyle(subjectLevel(n)).Render(fmt.Sprintf("%d/%d", n, subjectIdeal))
+
+	subjLabel := mutedStyle.Render("Subject")
+	bodyLabel := mutedStyle.Render("Body")
+	if m.commitField == fieldSubject {
+		subjLabel = accentStyle.Render("Subject")
+	} else {
+		bodyLabel = accentStyle.Render("Body")
+	}
+	hint := mutedStyle.Render("type(scope): subject · imperative, ≤50")
+	left := subjLabel + "  " + hint
+	pad := m.viewport.Width - lipgloss.Width(left) - lipgloss.Width(counter)
+	if pad < 1 {
+		pad = 1
+	}
+	subjectRow := left + strings.Repeat(" ", pad) + counter
+
+	sepW := m.viewport.Width
+	if sepW < 1 {
+		sepW = 1
+	}
+	sep := mutedStyle.Render(strings.Repeat("─", sepW))
+
+	lines := []string{strongStyle.Render(heading), mutedStyle.Render(scope)}
+	if m.amending && m.amendPushed() {
+		lines = append(lines, delStyle.Render("⚠ already pushed — amend needs a force-push"))
+	}
+	lines = append(lines,
+		"",
+		subjectRow,
+		m.subject.View(),
+		sep,
+		bodyLabel,
+		m.body.View(),
+		mutedStyle.Render("Ctrl-D "+verb+" · Tab switch · Esc cancel"),
+	)
+	return strings.Join(lines, "\n")
+}
+
+// amendScopeHint tells the user what `C` will fold into HEAD: staged changes
+// plus the edited message, or just the message when nothing is staged.
+func (m Model) amendScopeHint() string {
+	switch n := m.stagedCount(); n {
+	case 0:
+		return "Amending HEAD (message only)"
+	case 1:
+		return "Amending HEAD + 1 staged file"
+	default:
+		return fmt.Sprintf("Amending HEAD + %d staged files", n)
+	}
 }
 
 // commitScopeHint tells the user what `c` will commit: the staged files when any
@@ -421,7 +488,11 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 	case ModeConfirming:
 		return "Confirm", []keyHint{{"y", "yes"}, {"n", "no"}, {"esc", "cancel"}}
 	case ModeCommitting:
-		return "Commit", []keyHint{{"ctrl+d", "submit"}, {"esc", "cancel"}}
+		label := "Commit"
+		if m.amending {
+			label = "Amend"
+		}
+		return label, []keyHint{{"ctrl+d", "submit"}, {"tab", "switch"}, {"esc", "cancel"}}
 	}
 	if m.mainFocused {
 		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"n/N", "hunk"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}

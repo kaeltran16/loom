@@ -58,3 +58,37 @@ func TestLoadStatusCmd_returnsStatusLoadedMsg(t *testing.T) {
 		t.Errorf("payload wrong: %+v", got)
 	}
 }
+
+func TestCommitCmd_setsNoticeWithHash(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("a1b2c3d\n")})
+	cmd := commit(context.Background(), repo, "feat: x", "feat: x")
+	msg := cmd().(gitDoneMsg)
+	if msg.err != nil {
+		t.Fatalf("unexpected error: %v", msg.err)
+	}
+	if msg.notice != "Committed a1b2c3d feat: x" {
+		t.Errorf("notice = %q, want the success line", msg.notice)
+	}
+	if msg.cmd != "git commit" {
+		t.Errorf("cmd = %q, want git commit", msg.cmd)
+	}
+}
+
+func TestLoadHeadMessageCmd_splitsSubjectBody(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("feat: x\n\nwhy it matters\n")})
+	msg := loadHeadMessage(context.Background(), repo)().(amendPrefillMsg)
+	if msg.err != nil {
+		t.Fatalf("unexpected error: %v", msg.err)
+	}
+	if msg.subject != "feat: x" || msg.body != "why it matters" {
+		t.Errorf("prefill = (%q,%q), want (feat: x, why it matters)", msg.subject, msg.body)
+	}
+}
+
+func TestCommitAmendCmd_setsNotice(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("deadbee\n")})
+	msg := commitAmend(context.Background(), repo, "feat: x", "feat: x")().(gitDoneMsg)
+	if msg.cmd != "git commit --amend" || msg.notice != "Committed deadbee feat: x" {
+		t.Errorf("amend msg = %#v", msg)
+	}
+}

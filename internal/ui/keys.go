@@ -19,6 +19,7 @@ const (
 	keyDiscard      = "d"
 	keyEnter        = "enter"
 	keyCommit       = "c"
+	keyAmend        = "C"
 	keyFetch        = "f"
 	keyPull         = "p"
 	keyPush         = "P"

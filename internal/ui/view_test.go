@@ -155,7 +155,7 @@ func TestViewCommittingFillsPaneWithinBounds(t *testing.T) {
 	m.layout()
 	m.mode = ModeCommitting
 	m.files = []git.FileStatus{{Path: "internal/ui/view.go", Worktree: 'M'}}
-	m.input.SetValue("subject line")
+	m.subject.SetValue("subject line")
 
 	got := m.View()
 	if h := lipgloss.Height(got); h > m.h {
@@ -255,7 +255,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 			setup: func(m *Model) {
 				m.mode = ModeCommitting
 			},
-			want: "Commit: ctrl+d submit · esc cancel",
+			want: "Commit: ctrl+d submit · tab switch · esc cancel",
 		},
 		{
 			name: "main pane focused",
@@ -629,5 +629,68 @@ func TestViewNarrowHidesRailWithinHeight(t *testing.T) {
 	}
 	if h := lipgloss.Height(got); h > m.h {
 		t.Fatalf("narrow View height = %d, want <= %d", h, m.h)
+	}
+}
+
+func TestCommandStateShowsNotice(t *testing.T) {
+	m := newTestModel()
+	m.notice = "Committed a1b2c3d feat: x"
+	if got := m.commandStateText(); got != "Committed a1b2c3d feat: x" {
+		t.Errorf("commandStateText = %q, want the notice", got)
+	}
+	m.branch = git.BranchInfo{Name: "main"}
+	if got := m.topBar(); !strings.Contains(got, "Committed a1b2c3d feat: x") {
+		t.Errorf("topBar should show the notice: %q", got)
+	}
+}
+
+func TestCommitEditorShowsCounterAndFields(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	m.mode = ModeCommitting
+	m.subject.SetValue("feat: add body")
+	got := m.View()
+	for _, want := range []string{"Subject", "Body", "14/50", "Tab switch"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("commit editor missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestAmendScopeHint(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []git.FileStatus
+		want  string
+	}{
+		{"message only", nil, "Amending HEAD (message only)"},
+		{"one staged", []git.FileStatus{{Path: "a", Staged: 'M'}}, "Amending HEAD + 1 staged file"},
+		{"two staged", []git.FileStatus{{Path: "a", Staged: 'M'}, {Path: "b", Staged: 'A'}}, "Amending HEAD + 2 staged files"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newTestModel()
+			m.files = c.files
+			if got := m.amendScopeHint(); got != c.want {
+				t.Errorf("amendScopeHint = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestCommitEditorAmendShowsWarningWhenPushed(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	m.mode = ModeCommitting
+	m.amending = true
+	m.subject.SetValue("feat: x")
+	m.branch = git.BranchInfo{Name: "main", Upstream: "origin/main", Ahead: 0}
+	got := m.View()
+	for _, want := range []string{"Amend commit", "already pushed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("amend editor missing %q:\n%s", want, got)
+		}
 	}
 }
