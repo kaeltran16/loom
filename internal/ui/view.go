@@ -9,6 +9,10 @@ import (
 
 const mainHeaderHeight = 3
 
+// commitHeaderHeight is the lines mainContent draws above the input in commit
+// mode: heading, scope hint, key hint, and a blank separator.
+const commitHeaderHeight = 4
+
 const (
 	topBarHeight      = 1
 	statusRailWidth   = 30
@@ -64,7 +68,16 @@ func (m Model) View() string {
 		mainInnerH = 0
 	}
 	vm := m
-	if vm.mode != ModeCommitting {
+	if vm.mode == ModeCommitting {
+		// fill the pane: header above the input is 4 lines (heading, scope
+		// hint, key hint, blank), the rest is the editor.
+		vm.input.SetWidth(mainInnerW)
+		inputH := mainInnerH - commitHeaderHeight
+		if inputH < 1 {
+			inputH = 1
+		}
+		vm.input.SetHeight(inputH)
+	} else {
 		vm.viewport.Width = mainInnerW
 		vm.viewport.Height = mainInnerH - mainHeaderHeight
 		if vm.viewport.Height < 0 {

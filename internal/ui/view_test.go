@@ -148,6 +148,24 @@ func TestMainContentCommittingShowsScopeHint(t *testing.T) {
 	}
 }
 
+func TestViewCommittingFillsPaneWithinBounds(t *testing.T) {
+	m := newTestModel()
+	m.w = 120
+	m.h = 40
+	m.layout()
+	m.mode = ModeCommitting
+	m.files = []git.FileStatus{{Path: "internal/ui/view.go", Worktree: 'M'}}
+	m.input.SetValue("subject line")
+
+	got := m.View()
+	if h := lipgloss.Height(got); h > m.h {
+		t.Fatalf("committing View height = %d, want <= %d", h, m.h)
+	}
+	if w := lipgloss.Width(got); w > m.w {
+		t.Fatalf("committing View width = %d, want <= %d", w, m.w)
+	}
+}
+
 func TestMainTitleForEmptySelection(t *testing.T) {
 	m := newTestModel()
 	m.focus = PanelFiles
