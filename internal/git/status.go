@@ -10,10 +10,11 @@ import (
 // FileStatus is one changed path in the working tree.
 type FileStatus struct {
 	Path      string
-	Staged    rune // index status char (X); '.' means none
-	Worktree  rune // worktree status char (Y); '.' means none
+	Staged    rune   // index status char (X); '.' means none
+	Worktree  rune   // worktree status char (Y); '.' means none
 	Untracked bool
 	Unmerged  bool
+	Conflict  string // porcelain v2 unmerged code (e.g. "UU"); "" when not a conflict
 }
 
 // IsStaged reports whether the index differs from HEAD for this path.
@@ -67,7 +68,7 @@ func parseStatus(out []byte) ([]FileStatus, BranchInfo, error) {
 			// u <xy> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
 			f := strings.Fields(line)
 			if len(f) >= 11 {
-				files = append(files, FileStatus{Path: strings.Join(f[10:], " "), Unmerged: true})
+				files = append(files, FileStatus{Path: strings.Join(f[10:], " "), Unmerged: true, Conflict: f[1]})
 			}
 		case strings.HasPrefix(line, "? "):
 			files = append(files, FileStatus{Path: line[2:], Untracked: true})

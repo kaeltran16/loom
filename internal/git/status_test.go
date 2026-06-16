@@ -34,8 +34,8 @@ func TestParseStatus(t *testing.T) {
 	if files[2].Path != "docs/new.md" {
 		t.Errorf("file[2] path wrong: %+v", files[2])
 	}
-	// unmerged
-	if files[3].Path != "conflict.txt" || !files[3].Unmerged {
+	// unmerged: both modified (code UU in the fixture)
+	if files[3].Path != "conflict.txt" || !files[3].Unmerged || files[3].Conflict != "UU" {
 		t.Errorf("file[3] wrong: %+v", files[3])
 	}
 	// untracked
