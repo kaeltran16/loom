@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/kael02/loom/internal/git"
 )
 
 const mainHeaderHeight = 3
@@ -45,33 +45,45 @@ func (m Model) View() string {
 	if listOuter < listMinWidth {
 		listOuter = listMinWidth
 	}
-	list := m.renderPanel(panelTitle(panelName(m.focus), m.focusLen()), m.focus, m.panelLines(m.focus), listOuter, bodyH)
+	mainOuter := m.w - listOuter - railOuter
+	if mainOuter < 0 {
+		mainOuter = 0
+	}
+
+	list := m.renderPanel(panelTitle(panelName(m.focus), m.focusLen()), m.focus, m.panelRows(m.focus), listOuter, bodyH)
 
 	mainStyle := borderBlur
 	if m.mainFocused {
 		mainStyle = borderFocused
 	}
-	// mainViewportSize is the single source of truth for the main viewport's
-	// inner dimensions; layout() sizes the persisted viewport to the same value,
-	// so the render width always equals the display width. The border content
-	// height is vpH plus the in-pane header lines.
-	vpW, vpH := m.mainViewportSize()
+	mainInnerW := mainOuter - mainStyle.GetHorizontalFrameSize()
+	if mainInnerW < 0 {
+		mainInnerW = 0
+	}
+	mainInnerH := bodyH - mainStyle.GetVerticalFrameSize()
+	if mainInnerH < 0 {
+		mainInnerH = 0
+	}
 	vm := m
 	if vm.mode == ModeCommitting {
 		// fill the pane: the body textarea takes whatever the editor header
 		// (commitHeaderHeight) leaves of the pane's content height.
-		vm.subject.Width = vpW - 2
-		editorBodyH := vpH + mainHeaderHeight - vm.commitHeaderHeight()
+		vm.viewport.Width = mainInnerW
+		vm.subject.Width = mainInnerW - 2
+		editorBodyH := mainInnerH - vm.commitHeaderHeight()
 		if editorBodyH < 1 {
 			editorBodyH = 1
 		}
-		vm.body.SetWidth(vpW)
+		vm.body.SetWidth(mainInnerW)
 		vm.body.SetHeight(editorBodyH)
 	} else {
-		vm.viewport.Width = vpW
-		vm.viewport.Height = vpH
+		vm.viewport.Width = mainInnerW
+		vm.viewport.Height = mainInnerH - mainHeaderHeight
+		if vm.viewport.Height < 0 {
+			vm.viewport.Height = 0
+		}
 	}
-	main := mainStyle.Width(vpW).Height(vpH + mainHeaderHeight).MaxHeight(bodyH).Render(vm.mainContent())
+	main := mainStyle.Width(mainInnerW).Height(mainInnerH).MaxHeight(bodyH).Render(vm.mainContent())
 
 	cols := []string{list, main}
 	if railVisible {
@@ -89,7 +101,6 @@ func (m Model) helpOverlay() string {
 		"1/2/3 or Tab   focus Files / Branches / Commits",
 		"j/k or ↑/↓      move cursor (scroll the diff when in it)",
 		"g / G           diff: jump to top / bottom",
-		"n / N           diff: next / prev hunk",
 		"l / h           enter diff pane / back to list",
 		"space           stage / unstage file",
 		"d               discard (confirm y)",
@@ -225,26 +236,11 @@ func (m Model) recentCommandLines(max int) []string {
 func (m Model) selectedContextLines() []string {
 	switch m.focus {
 	case PanelFiles:
-		i := m.cursor[PanelFiles]
-		if i >= len(m.files) {
+		f, ok := m.selectedFile()
+		if !ok {
 			return []string{"No file selected", "working tree clean"}
 		}
-		f := m.files[i]
-		state := "unstaged file"
-		actions := "actions: stage, discard"
-		if f.IsStaged() {
-			state = "staged file"
-			actions = "actions: unstage, commit"
-		}
-		if f.Untracked {
-			state = "untracked file"
-			actions = "actions: stage, discard"
-		}
-		if f.Unmerged {
-			state = "conflict: " + conflictLabel(f.Conflict)
-			actions = "actions: e edit · space resolve · A abort"
-		}
-		return []string{f.Path, state, actions}
+		return []string{f.Path, fileReviewState(f), m.selectedFileActionLine(f)}
 	case PanelBranches:
 		i := m.cursor[PanelBranches]
 		if i >= len(m.branches) {
@@ -275,6 +271,60 @@ func (m Model) selectedContextLines() []string {
 		return append(lines, "actions: commit, fetch, pull, push")
 	default:
 		return nil
+	}
+}
+
+func (m Model) selectedFile() (git.FileStatus, bool) {
+	i := m.cursor[PanelFiles]
+	if i < 0 || i >= len(m.files) {
+		return git.FileStatus{}, false
+	}
+	return m.files[i], true
+}
+
+func fileReviewState(f git.FileStatus) string {
+	switch {
+	case f.Unmerged:
+		return "conflict: " + conflictLabel(f.Conflict)
+	case f.Untracked:
+		return "untracked file"
+	case f.IsStaged():
+		return "staged file"
+	default:
+		return "unstaged file"
+	}
+}
+
+func (m Model) commitHint() string {
+	if m.anyStaged() {
+		return "commit staged"
+	}
+	return "commit all"
+}
+
+func (m Model) selectedFileActionLine(f git.FileStatus) string {
+	switch {
+	case f.Unmerged:
+		return "actions: e edit, space resolve, A abort, c commit"
+	case f.Untracked:
+		return "actions: space stage, d discard"
+	case f.IsStaged():
+		return "actions: space unstage, c commit staged"
+	default:
+		return "actions: space stage, d discard, c " + m.commitHint()
+	}
+}
+
+func (m Model) selectedFileFooterHints(f git.FileStatus) []keyHint {
+	switch {
+	case f.Unmerged:
+		return []keyHint{{"e", "edit"}, {"space", "resolve"}, {"A", "abort"}, {"c", "commit"}, {"?", "help"}, {"q", "quit"}}
+	case f.Untracked:
+		return []keyHint{{"space", "stage"}, {"d", "discard"}, {"?", "help"}, {"q", "quit"}}
+	case f.IsStaged():
+		return []keyHint{{"space", "unstage"}, {"c", "commit staged"}, {"?", "help"}, {"q", "quit"}}
+	default:
+		return []keyHint{{"space", "stage"}, {"d", "discard"}, {"c", m.commitHint()}, {"?", "help"}, {"q", "quit"}}
 	}
 }
 
@@ -352,10 +402,12 @@ func (m Model) mainContent() string {
 		title += strings.Repeat(" ", pad) + mutedStyle.Render(status)
 	}
 	body := m.viewport.View()
-	if strings.TrimSpace(ansi.Strip(body)) == "" {
+	if m.mainLoading && m.focus == PanelFiles {
+		body = "Loading diff..."
+	} else if strings.TrimSpace(body) == "" {
 		body = m.emptyMainBody()
 	}
-	return title + "\n" + mutedStyle.Render(strings.Repeat("─", lipgloss.Width(title))) + "\n\n" + body
+	return title + "\n" + mutedStyle.Render(strings.Repeat("─", lipgloss.Width(title))) + "\n\n" + colorizeDiff(body)
 }
 
 // scrollStatus is a compact main-pane position cue: arrows for hidden content
@@ -464,16 +516,12 @@ func (m Model) commitScopeHint() string {
 func (m Model) mainTitle() string {
 	switch m.focus {
 	case PanelFiles:
-		i := m.cursor[PanelFiles]
-		if i >= len(m.files) {
+		f, ok := m.selectedFile()
+		if !ok {
 			return "Working tree clean"
 		}
-		f := m.files[i]
-		state := "unstaged"
-		if f.IsStaged() {
-			state = "staged"
-		}
-		return fmt.Sprintf("Diff: %s (%s)", f.Path, state)
+		pos, total := m.selectedFilePosition()
+		return fmt.Sprintf("%s | %s | %d of %d", f.Path, fileTitleState(f), pos, total)
 	case PanelBranches:
 		i := m.cursor[PanelBranches]
 		if i >= len(m.branches) {
@@ -495,10 +543,37 @@ func (m Model) mainTitle() string {
 	}
 }
 
+func fileTitleState(f git.FileStatus) string {
+	switch {
+	case f.Unmerged:
+		return "conflict"
+	case f.Untracked:
+		return "untracked"
+	case f.IsStaged():
+		return "staged"
+	default:
+		return "unstaged"
+	}
+}
+
+func (m Model) selectedFilePosition() (int, int) {
+	if len(m.files) == 0 {
+		return 0, 0
+	}
+	i := m.cursor[PanelFiles]
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(m.files) {
+		i = len(m.files) - 1
+	}
+	return i + 1, len(m.files)
+}
+
 func (m Model) emptyMainBody() string {
 	switch m.focus {
 	case PanelFiles:
-		return "No file diff to show."
+		return "No diff for this file"
 	case PanelBranches:
 		return "No branch log to show."
 	case PanelCommits:
@@ -525,14 +600,14 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 		return label, []keyHint{{"ctrl+d", "submit"}, {"tab", "switch"}, {"esc", "cancel"}}
 	}
 	if m.mainFocused {
-		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"n/N", "hunk"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}
+		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}
 	}
 	switch m.focus {
 	case PanelFiles:
-		if m.merging {
-			return "Conflict", []keyHint{{"e", "edit"}, {"space", "resolve"}, {"A", "abort"}, {"c", "commit"}}
+		if f, ok := m.selectedFile(); ok {
+			return "Files", m.selectedFileFooterHints(f)
 		}
-		return "Files", []keyHint{{"space", "stage"}, {"d", "discard"}, {"c", "commit"}, {"?", "help"}, {"q", "quit"}}
+		return "Files", []keyHint{{"?", "help"}, {"q", "quit"}}
 	case PanelBranches:
 		return "Branches", []keyHint{{"enter", "switch"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
 	case PanelCommits:

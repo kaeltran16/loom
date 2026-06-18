@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -62,9 +61,7 @@ type Model struct {
 	cursor      map[Panel]int
 	scroll      map[Panel]int
 	viewport    viewport.Model
-	mainDiff    *git.Diff // non-nil when the main pane shows a parsed diff
-	mainText    string    // plain text for the branch-log path (mainDiff nil)
-	hunkRows    []int     // viewport row index of each hunk band, for n/N
+	mainLoading bool // true while the main pane is waiting for the latest selection load
 	subject     textinput.Model
 	body        textarea.Model
 	commitField commitField
@@ -123,40 +120,13 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-// mainViewportSize returns the inner width/height of the diff/main viewport for
-// the current window. Single source of truth shared by layout() and View() so
-// the render width always equals the displayed width. It mirrors View()'s pane
-// layout (rail when wide, list = w/4, main takes the rest, less the border).
-func (m Model) mainViewportSize() (w, h int) {
-	railOuter := 0
-	if m.w >= minRailWindowWide {
-		railOuter = statusRailWidth
-	}
-	listOuter := m.w / 4
-	if listOuter < listMinWidth {
-		listOuter = listMinWidth
-	}
-	mainOuter := m.w - listOuter - railOuter
-	if mainOuter < 0 {
-		mainOuter = 0
-	}
-	w = mainOuter - borderBlur.GetHorizontalFrameSize()
-	if w < 0 {
-		w = 0
-	}
-	bodyH := m.h - topBarHeight - 1
-	if bodyH < 0 {
-		bodyH = 0
-	}
-	h = bodyH - borderBlur.GetVerticalFrameSize() - mainHeaderHeight
-	if h < 0 {
-		h = 0
-	}
-	return w, h
-}
-
 // layout sizes the panes for the current window.
 func (m *Model) layout() {
+	sideW := m.w / 3
+	mainW := m.w - sideW - 2
+	if mainW < 0 {
+		mainW = 0
+	}
 	bodyH := m.h - topBarHeight - 1 // top bar row + footer row
 	if bodyH < 0 {
 		bodyH = 0
@@ -166,18 +136,10 @@ func (m *Model) layout() {
 		listH = 0
 	}
 	m.listHeight = listH
-	m.viewport.Width, m.viewport.Height = m.mainViewportSize()
-}
-
-// refreshViewport re-renders the main pane content at the current viewport
-// width: a parsed diff via renderDiff, otherwise the plain branch-log text.
-func (m *Model) refreshViewport() {
-	if m.mainDiff != nil {
-		lines, hunkRows := renderDiff(*m.mainDiff, m.viewport.Width)
-		m.viewport.SetContent(strings.Join(lines, "\n"))
-		m.hunkRows = hunkRows
-		return
+	mainH := bodyH - borderBlur.GetVerticalFrameSize() - mainHeaderHeight
+	if mainH < 0 {
+		mainH = 0
 	}
-	m.viewport.SetContent(m.mainText)
-	m.hunkRows = nil
+	m.viewport.Width = mainW
+	m.viewport.Height = mainH
 }

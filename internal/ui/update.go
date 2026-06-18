@@ -16,7 +16,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.layout()
-		m.refreshViewport()
 		return m, nil
 
 	case statusLoadedMsg:
@@ -46,16 +45,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case diffLoadedMsg:
 		// drop responses for a selection we've already navigated away from
 		if msg.seq == m.reqSeq {
-			m.mainDiff = &msg.diff
-			m.mainText = ""
-			m.refreshViewport()
-		}
-		return m, nil
-	case logLoadedMsg:
-		if msg.seq == m.reqSeq {
-			m.mainDiff = nil
-			m.mainText = msg.text
-			m.refreshViewport()
+			m.viewport.SetContent(msg.text)
+			m.mainLoading = false
 		}
 		return m, nil
 	case errMsg:
@@ -249,44 +240,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case keyHunkNext:
-		if m.mainDiff != nil {
-			m.viewport.SetYOffset(nextOffset(m.hunkRows, m.viewport.YOffset))
-		}
-		return m, nil
-	case keyHunkPrev:
-		if m.mainDiff != nil {
-			m.viewport.SetYOffset(prevOffset(m.hunkRows, m.viewport.YOffset))
-		}
-		return m, nil
 	}
 	return m, nil
-}
-
-// nextOffset returns the first hunk row strictly below cur, clamped to the last.
-func nextOffset(rows []int, cur int) int {
-	for _, r := range rows {
-		if r > cur {
-			return r
-		}
-	}
-	if len(rows) > 0 {
-		return rows[len(rows)-1]
-	}
-	return cur
-}
-
-// prevOffset returns the last hunk row strictly above cur, clamped to the first.
-func prevOffset(rows []int, cur int) int {
-	for i := len(rows) - 1; i >= 0; i-- {
-		if rows[i] < cur {
-			return rows[i]
-		}
-	}
-	if len(rows) > 0 {
-		return rows[0]
-	}
-	return cur
 }
 
 // startRemote dispatches a long-running remote op under a cancelable child
@@ -358,12 +313,13 @@ func (m *Model) moveCursor(delta int) {
 	}
 	m.cursor[m.focus] = c
 
+	selectedRow := m.selectedPanelRow(m.focus)
 	off := m.scroll[m.focus]
-	if c < off {
-		off = c
+	if selectedRow < off {
+		off = selectedRow
 	}
-	if m.listHeight > 0 && c >= off+m.listHeight {
-		off = c - m.listHeight + 1
+	if m.listHeight > 0 && selectedRow >= off+m.listHeight {
+		off = selectedRow - m.listHeight + 1
 	}
 	m.scroll[m.focus] = off
 }
@@ -397,7 +353,12 @@ func (m Model) focusLen() int {
 // selection is dropped as stale, then loads the main pane for the new one.
 func (m Model) reloadMain() (Model, tea.Cmd) {
 	m.reqSeq++
-	return m, m.loadMainForSelection()
+	cmd := m.loadMainForSelection()
+	m.mainLoading = cmd != nil
+	if cmd != nil {
+		m.viewport.SetContent("")
+	}
+	return m, cmd
 }
 
 // loadMainForSelection returns a Cmd to refresh the main pane for the current
@@ -407,7 +368,7 @@ func (m Model) loadMainForSelection() tea.Cmd {
 	case PanelFiles:
 		if i := m.cursor[PanelFiles]; i < len(m.files) {
 			f := m.files[i]
-			return loadDiff(m.ctx, m.repo, f.Path, f.IsStaged(), f.Untracked, m.reqSeq)
+			return loadDiff(m.ctx, m.repo, f.Path, f.IsStaged(), m.reqSeq)
 		}
 	case PanelCommits:
 		if i := m.cursor[PanelCommits]; i < len(m.commits) {

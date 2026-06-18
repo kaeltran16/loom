@@ -57,7 +57,7 @@ func TestPanelLinesRenderRows(t *testing.T) {
 
 func TestRenderPanelFitsRequestedHeight(t *testing.T) {
 	m := newTestModel()
-	got := m.renderPanel("Files 1", PanelFiles, []string{"M  internal/ui/view.go"}, 40, 13)
+	got := m.renderPanel("Files 1", PanelFiles, []panelRow{{text: "M  internal/ui/view.go", kind: panelRowItem, itemIndex: 0}}, 40, 13)
 	if height := lipgloss.Height(got); height > 13 {
 		t.Fatalf("renderPanel height = %d, want <= 13", height)
 	}
@@ -75,15 +75,19 @@ func TestMainTitleForFocusedSelection(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "internal/ui/view.go", Worktree: 'M'}}
 			},
-			want: "Diff: internal/ui/view.go (unstaged)",
+			want: "internal/ui/view.go | unstaged | 1 of 1",
 		},
 		{
 			name: "staged file diff",
 			setup: func(m *Model) {
 				m.focus = PanelFiles
-				m.files = []git.FileStatus{{Path: "README.md", Staged: 'M'}}
+				m.files = []git.FileStatus{
+					{Path: "a.go", Worktree: 'M'},
+					{Path: "README.md", Staged: 'M'},
+				}
+				m.cursor[PanelFiles] = 1
 			},
-			want: "Diff: README.md (staged)",
+			want: "README.md | staged | 2 of 2",
 		},
 		{
 			name: "branch log",
@@ -183,11 +187,47 @@ func TestMainContentIncludesHeading(t *testing.T) {
 	m.viewport.SetContent("+new line")
 
 	got := m.mainContent()
-	if !strings.Contains(got, "Diff: a.go (unstaged)") {
+	if !strings.Contains(got, "a.go | unstaged | 1 of 1") {
 		t.Fatalf("mainContent missing heading: %q", got)
 	}
 	if !strings.Contains(got, "+new line") {
 		t.Fatalf("mainContent missing diff: %q", got)
+	}
+}
+
+func TestMainTitleShowsConflictAndUntrackedState(t *testing.T) {
+	tests := []struct {
+		name string
+		file git.FileStatus
+		want string
+	}{
+		{"conflict", git.FileStatus{Path: "a.go", Unmerged: true, Conflict: "UU"}, "a.go | conflict | 1 of 1"},
+		{"untracked", git.FileStatus{Path: "a.go", Untracked: true}, "a.go | untracked | 1 of 1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.focus = PanelFiles
+			m.files = []git.FileStatus{tt.file}
+			if got := m.mainTitle(); got != tt.want {
+				t.Fatalf("mainTitle = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMainContentShowsLoadingDiffCopy(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.mainLoading = true
+
+	got := m.mainContent()
+	if !strings.Contains(got, "Loading diff...") {
+		t.Fatalf("mainContent should show loading copy:\n%s", got)
 	}
 }
 
@@ -223,11 +263,39 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 		want  string
 	}{
 		{
-			name: "files focus",
+			name: "files focus unstaged with nothing staged",
 			setup: func(m *Model) {
 				m.focus = PanelFiles
+				m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
 			},
-			want: "Files: space stage · d discard · c commit · ? help · q quit",
+			want: "Files: space stage · d discard · c commit all · ? help · q quit",
+		},
+		{
+			name: "files focus unstaged with staged changes elsewhere",
+			setup: func(m *Model) {
+				m.focus = PanelFiles
+				m.files = []git.FileStatus{
+					{Path: "a.go", Worktree: 'M'},
+					{Path: "b.go", Staged: 'M'},
+				}
+			},
+			want: "Files: space stage · d discard · c commit staged · ? help · q quit",
+		},
+		{
+			name: "files focus staged",
+			setup: func(m *Model) {
+				m.focus = PanelFiles
+				m.files = []git.FileStatus{{Path: "a.go", Staged: 'M'}}
+			},
+			want: "Files: space unstage · c commit staged · ? help · q quit",
+		},
+		{
+			name: "files focus untracked",
+			setup: func(m *Model) {
+				m.focus = PanelFiles
+				m.files = []git.FileStatus{{Path: "a.go", Untracked: true}}
+			},
+			want: "Files: space stage · d discard · ? help · q quit",
 		},
 		{
 			name: "branches focus",
@@ -263,7 +331,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 				m.focus = PanelFiles
 				m.mainFocused = true
 			},
-			want: "Diff: j/k scroll · g/G top/bot · n/N hunk · h back · ? help · q quit",
+			want: "Diff: j/k scroll · g/G top/bot · h back · ? help · q quit",
 		},
 	}
 
@@ -282,6 +350,7 @@ func TestFooterByState(t *testing.T) {
 	// Wide + idle: key hints render (now styled, so assert the hints, not exact text).
 	idle := newTestModel()
 	idle.focus = PanelFiles
+	idle.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
 	if got := idle.footer(true); !strings.Contains(got, "stage") || !strings.Contains(got, "quit") {
 		t.Fatalf("idle footer = %q, want key hints", got)
 	}
@@ -408,7 +477,7 @@ func TestSelectedContextLines(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "internal/ui/view.go", Worktree: 'M'}}
 			},
-			want: []string{"internal/ui/view.go", "unstaged file", "actions: stage, discard"},
+			want: []string{"internal/ui/view.go", "unstaged file", "actions: space stage, d discard, c commit all"},
 		},
 		{
 			name: "staged file",
@@ -416,7 +485,7 @@ func TestSelectedContextLines(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "README.md", Staged: 'A'}}
 			},
-			want: []string{"README.md", "staged file", "actions: unstage, commit"},
+			want: []string{"README.md", "staged file", "actions: space unstage, c commit staged"},
 		},
 		{
 			name: "branch",
@@ -444,6 +513,49 @@ func TestSelectedContextLines(t *testing.T) {
 			for _, want := range tt.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("selectedContextLines missing %q: %q", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestSelectedContextLinesShowConcreteFileActions(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []git.FileStatus
+		want  []string
+	}{
+		{
+			name:  "unstaged",
+			files: []git.FileStatus{{Path: "a.go", Worktree: 'M'}},
+			want:  []string{"a.go", "unstaged file", "actions: space stage, d discard, c commit all"},
+		},
+		{
+			name:  "staged",
+			files: []git.FileStatus{{Path: "a.go", Staged: 'M'}},
+			want:  []string{"a.go", "staged file", "actions: space unstage, c commit staged"},
+		},
+		{
+			name:  "untracked",
+			files: []git.FileStatus{{Path: "a.go", Untracked: true}},
+			want:  []string{"a.go", "untracked file", "actions: space stage, d discard"},
+		},
+		{
+			name:  "conflict",
+			files: []git.FileStatus{{Path: "a.go", Unmerged: true, Conflict: "UU"}},
+			want:  []string{"a.go", "conflict: both modified", "actions: e edit, space resolve, A abort, c commit"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.focus = PanelFiles
+			m.files = tt.files
+			got := strings.Join(m.selectedContextLines(), "\n")
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("selectedContextLines missing %q:\n%s", want, got)
 				}
 			}
 		})
@@ -523,11 +635,11 @@ func TestViewRendersFocusMode(t *testing.T) {
 
 	got := m.View()
 	for _, want := range []string{
-		"[1 Files 1]",                          // focused workflow tab in the top bar
-		"main ↑2 ↓0",                           // branch summary in the top bar
-		"Status Rail",                          // rail visible at width 120
-		"Diff: internal/ui/view.go (unstaged)", // preview heading
-		"stage",                                // footer key hint
+		"[1 Files 1]", // focused workflow tab in the top bar
+		"main ↑2 ↓0",  // branch summary in the top bar
+		"Status Rail", // rail visible at width 120
+		"internal/ui/view.go | unstaged | 1 of 1", // preview heading
+		"stage", // footer key hint
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("View missing %q:\n%s", want, got)
@@ -719,7 +831,8 @@ func TestFooterConflictHints(t *testing.T) {
 	m := newTestModel()
 	m.merging = true
 	m.focus = PanelFiles
-	if got := m.footerActions(); got != "Conflict: e edit · space resolve · A abort · c commit" {
+	m.files = []git.FileStatus{{Path: "a.go", Unmerged: true, Conflict: "UU"}}
+	if got := m.footerActions(); got != "Files: e edit · space resolve · A abort · c commit · ? help · q quit" {
 		t.Errorf("footer = %q", got)
 	}
 }

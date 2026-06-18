@@ -22,19 +22,6 @@ func TestUpdate_WindowSizeStoresDimensions(t *testing.T) {
 	}
 }
 
-func TestLayoutSizesViewportToMainViewportSize(t *testing.T) {
-	m := newTestModel()
-	m.w, m.h = 120, 40
-	m.layout()
-	wantW, wantH := m.mainViewportSize()
-	if m.viewport.Width != wantW || m.viewport.Height != wantH {
-		t.Fatalf("viewport = %dx%d, want %dx%d", m.viewport.Width, m.viewport.Height, wantW, wantH)
-	}
-	if wantW <= 0 || wantH <= 0 {
-		t.Fatalf("expected a positive viewport at 120x40, got %dx%d", wantW, wantH)
-	}
-}
-
 func TestUpdate_StatusLoadedPopulatesFiles(t *testing.T) {
 	m := newTestModel()
 	updated, _ := m.Update(statusLoadedMsg{
@@ -347,8 +334,60 @@ func TestMoveCursorScrollsToKeepSelectionVisible(t *testing.T) {
 	if m.cursor[PanelFiles] != 15 {
 		t.Fatalf("cursor = %d, want 15", m.cursor[PanelFiles])
 	}
-	if m.scroll[PanelFiles] != 6 { // 15 - 10 + 1
-		t.Fatalf("scroll = %d, want 6", m.scroll[PanelFiles])
+	if m.scroll[PanelFiles] != 7 { // selected visual row 16 - 10 + 1
+		t.Fatalf("scroll = %d, want 7", m.scroll[PanelFiles])
+	}
+}
+
+func TestSelectedPanelRowForGroupedFiles(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.files = []git.FileStatus{
+		{Path: "unstaged.go", Worktree: 'M'},
+		{Path: "staged.go", Staged: 'M'},
+		{Path: "new.go", Untracked: true},
+	}
+
+	m.cursor[PanelFiles] = 1
+	if got := m.selectedPanelRow(PanelFiles); got != 1 {
+		t.Fatalf("selected staged visual row = %d, want 1", got)
+	}
+
+	m.cursor[PanelFiles] = 0
+	if got := m.selectedPanelRow(PanelFiles); got != 3 {
+		t.Fatalf("selected unstaged visual row = %d, want 3", got)
+	}
+
+	m.cursor[PanelFiles] = 2
+	if got := m.selectedPanelRow(PanelFiles); got != 5 {
+		t.Fatalf("selected untracked visual row = %d, want 5", got)
+	}
+}
+
+func TestMoveCursorScrollsGroupedFilesByVisibleRows(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.listHeight = 2
+	m.files = []git.FileStatus{
+		{Path: "unstaged.go", Worktree: 'M'},
+		{Path: "staged.go", Staged: 'M'},
+		{Path: "new.go", Untracked: true},
+	}
+
+	m.moveCursor(1)
+	if m.cursor[PanelFiles] != 1 {
+		t.Fatalf("cursor = %d, want staged file index 1", m.cursor[PanelFiles])
+	}
+	if m.scroll[PanelFiles] != 0 {
+		t.Fatalf("scroll after staged file = %d, want 0", m.scroll[PanelFiles])
+	}
+
+	m.moveCursor(-1)
+	if m.cursor[PanelFiles] != 0 {
+		t.Fatalf("cursor = %d, want unstaged file index 0", m.cursor[PanelFiles])
+	}
+	if m.scroll[PanelFiles] != 2 {
+		t.Fatalf("scroll after unstaged visual row = %d, want 2", m.scroll[PanelFiles])
 	}
 }
 
@@ -456,49 +495,13 @@ func TestUpdate_SelectionLoadStampsAdvancingSeq(t *testing.T) {
 	}
 }
 
-func TestUpdate_DiffLoadedRendersModel(t *testing.T) {
-	m := newTestModel()
-	m.w, m.h = 120, 40
-	m.layout()
-	d := git.Diff{Files: []git.FileDiff{{
-		Path: "x.go", Lang: "go", Adds: 1,
-		Hunks: []git.Hunk{{Lines: []git.DiffLine{{Kind: git.LineAdd, NewNo: 1, Text: "hello"}}}},
-	}}}
-	updated, _ := m.Update(diffLoadedMsg{diff: d})
-	got := updated.(Model)
-	if got.mainDiff == nil {
-		t.Fatal("mainDiff not stored")
-	}
-	if !strings.Contains(got.viewport.View(), "hello") {
-		t.Fatalf("viewport missing rendered content:\n%s", got.viewport.View())
-	}
-}
-
-func TestUpdate_LogLoadedSetsText(t *testing.T) {
-	m := newTestModel()
-	m.w, m.h = 120, 40
-	m.layout()
-	updated, _ := m.Update(logLoadedMsg{text: "abc123  first commit"})
-	got := updated.(Model)
-	if got.mainDiff != nil {
-		t.Fatal("mainDiff should be nil for the log path")
-	}
-	if !strings.Contains(got.viewport.View(), "first commit") {
-		t.Fatalf("viewport missing log text:\n%s", got.viewport.View())
-	}
-}
-
 func TestUpdate_CurrentDiffResponseApplied(t *testing.T) {
 	m := newTestModel()
 	m.w, m.h = 80, 24
 	m.layout()
 	m.reqSeq = 5
 
-	d := git.Diff{Files: []git.FileDiff{{
-		Path: "x.go", Lang: "go", Adds: 1,
-		Hunks: []git.Hunk{{Lines: []git.DiffLine{{Kind: git.LineAdd, NewNo: 1, Text: "FRESH"}}}},
-	}}}
-	updated, _ := m.Update(diffLoadedMsg{diff: d, seq: 5})
+	updated, _ := m.Update(diffLoadedMsg{text: "FRESH", seq: 5})
 
 	if !strings.Contains(updated.(Model).viewport.View(), "FRESH") {
 		t.Error("diff response matching the current token should update the viewport")
@@ -511,48 +514,29 @@ func TestUpdate_StaleDiffResponseIgnored(t *testing.T) {
 	m.layout()
 	m.reqSeq = 5 // a newer request has already been issued
 
-	d := git.Diff{Files: []git.FileDiff{{
-		Path: "x.go", Lang: "go", Adds: 1,
-		Hunks: []git.Hunk{{Lines: []git.DiffLine{{Kind: git.LineAdd, NewNo: 1, Text: "STALE"}}}},
-	}}}
-	updated, _ := m.Update(diffLoadedMsg{diff: d, seq: 4})
+	updated, _ := m.Update(diffLoadedMsg{text: "STALE", seq: 4})
 
 	if strings.Contains(updated.(Model).viewport.View(), "STALE") {
 		t.Error("stale diff response (seq 4 < current 5) should not update the viewport")
 	}
 }
 
-func TestUpdate_NAndNJumpBetweenHunks(t *testing.T) {
+func TestReloadMainSetsAndClearsLoadingState(t *testing.T) {
 	m := newTestModel()
-	m.mainDiff = &git.Diff{} // non-nil: hunk nav is enabled
-	m.hunkRows = []int{2, 8}
-	m.viewport.Height = 4
-	m.viewport.SetContent(strings.Repeat("x\n", 30))
+	m.focus = PanelFiles
+	m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	if off := next.(Model).viewport.YOffset; off != 2 {
-		t.Fatalf("after n: YOffset = %d, want 2", off)
+	loading, cmd := m.reloadMain()
+	if cmd == nil {
+		t.Fatal("expected a diff load command")
+	}
+	if !loading.mainLoading {
+		t.Fatal("reloadMain should set mainLoading while a load is in flight")
 	}
 
-	mid := next.(Model)
-	next2, _ := mid.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	if off := next2.(Model).viewport.YOffset; off != 8 {
-		t.Fatalf("after second n: YOffset = %d, want 8", off)
-	}
-
-	prev, _ := next2.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("N")})
-	if off := prev.(Model).viewport.YOffset; off != 2 {
-		t.Fatalf("after N: YOffset = %d, want 2", off)
-	}
-}
-
-func TestNextPrevOffsetClamp(t *testing.T) {
-	rows := []int{1, 10, 20}
-	if got := nextOffset(rows, 20); got != 20 {
-		t.Errorf("nextOffset past last = %d, want 20", got)
-	}
-	if got := prevOffset(rows, 1); got != 1 {
-		t.Errorf("prevOffset before first = %d, want 1", got)
+	done, _ := loading.Update(diffLoadedMsg{text: "diff", seq: loading.reqSeq})
+	if done.(Model).mainLoading {
+		t.Fatal("matching diffLoadedMsg should clear mainLoading")
 	}
 }
 
