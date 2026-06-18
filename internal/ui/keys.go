@@ -27,8 +27,6 @@ const (
 	keyPush         = "P"
 	keyHelp         = "?"
 	keyLog          = "x"
-	keyHunkNext     = "n"
-	keyHunkPrev     = "N"
 	keyConfirm      = "y"
 	keyCancel       = "esc"
 )

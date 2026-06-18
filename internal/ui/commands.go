@@ -3,10 +3,10 @@ package ui
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kael02/loom/internal/git"
@@ -43,39 +43,35 @@ func loadCommits(ctx context.Context, repo *git.Repo) tea.Cmd {
 	}
 }
 
-func loadDiff(ctx context.Context, repo *git.Repo, path string, staged, untracked bool, seq int) tea.Cmd {
+func loadDiff(ctx context.Context, repo *git.Repo, path string, staged bool, seq int) tea.Cmd {
 	return func() tea.Msg {
-		if untracked {
-			full := filepath.Join(repo.Root(), path)
-			info, err := os.Stat(full)
-			if err != nil {
-				return diffLoadedMsg{diff: git.MessageDiff(path, "Cannot read file"), seq: seq}
-			}
-			if !info.Mode().IsRegular() {
-				return diffLoadedMsg{diff: git.MessageDiff(path, "Not a regular file"), seq: seq}
-			}
-			content, err := os.ReadFile(full)
-			if err != nil {
-				return diffLoadedMsg{diff: git.MessageDiff(path, "Cannot read file"), seq: seq}
-			}
-			return diffLoadedMsg{diff: git.SynthesizeUntracked(path, content), seq: seq}
-		}
-		raw, err := repo.Diff(ctx, path, staged)
+		text, err := repo.Diff(ctx, path, staged)
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffLoadedMsg{diff: git.ParseDiff(raw), seq: seq}
+		return diffLoadedMsg{text: text, seq: seq}
 	}
 }
 
 func loadShow(ctx context.Context, repo *git.Repo, hash string, seq int) tea.Cmd {
 	return func() tea.Msg {
-		raw, err := repo.Show(ctx, hash)
+		text, err := repo.Show(ctx, hash)
 		if err != nil {
 			return errMsg{err}
 		}
-		return diffLoadedMsg{diff: git.ParseDiff(raw), seq: seq}
+		return diffLoadedMsg{text: diffOnlyShow(text), seq: seq}
 	}
+}
+
+func diffOnlyShow(text string) string {
+	const marker = "diff --git "
+	if strings.HasPrefix(text, marker) {
+		return text
+	}
+	if i := strings.Index(text, "\n"+marker); i >= 0 {
+		return text[i+1:]
+	}
+	return ""
 }
 
 func loadBranchLog(ctx context.Context, repo *git.Repo, name string, seq int) tea.Cmd {
@@ -84,11 +80,12 @@ func loadBranchLog(ctx context.Context, repo *git.Repo, name string, seq int) te
 		if err != nil {
 			return errMsg{err}
 		}
+		// reuse diffLoadedMsg to render text in the main pane
 		text := ""
 		for _, c := range cs {
 			text += c.Hash[:7] + "  " + c.Subject + "\n"
 		}
-		return logLoadedMsg{text: text, seq: seq}
+		return diffLoadedMsg{text: text, seq: seq}
 	}
 }
 

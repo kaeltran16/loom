@@ -86,6 +86,39 @@ func TestLoadHeadMessageCmd_splitsSubjectBody(t *testing.T) {
 	}
 }
 
+func TestLoadShowCmd_suppressesCommitPreamble(t *testing.T) {
+	raw := strings.Join([]string{
+		"commit 286ba6e741475ad0f4fdb68f1f5cd41935dd77bc",
+		"Author: Kael <khang.tran@mozox.com>",
+		"Date:   Tue Jun 16 16:52:36 2026 +0700",
+		"",
+		"    docs(spec): merge-conflict handling via editor delegation",
+		"",
+		"diff --git a/docs/spec.md b/docs/spec.md",
+		"new file mode 100644",
+		"index 0000000..2b088cf",
+		"--- /dev/null",
+		"+++ b/docs/spec.md",
+		"@@ -0,0 +1 @@",
+		"+# Merge Conflict Editor Delegation Design",
+	}, "\n")
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte(raw)})
+
+	msg := loadShow(context.Background(), repo, "286ba6e", 7)().(diffLoadedMsg)
+
+	if msg.seq != 7 {
+		t.Fatalf("seq = %d, want 7", msg.seq)
+	}
+	if !strings.HasPrefix(msg.text, "diff --git a/docs/spec.md b/docs/spec.md") {
+		t.Fatalf("show text should start at the diff, got:\n%s", msg.text)
+	}
+	for _, hidden := range []string{"commit 286ba6e", "Author:", "Date:", "docs(spec):"} {
+		if strings.Contains(msg.text, hidden) {
+			t.Fatalf("show text leaked preamble fragment %q:\n%s", hidden, msg.text)
+		}
+	}
+}
+
 func TestCommitAmendCmd_setsNotice(t *testing.T) {
 	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("deadbee\n")})
 	msg := commitAmend(context.Background(), repo, "feat: x", "feat: x")().(gitDoneMsg)
