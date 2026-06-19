@@ -1222,3 +1222,176 @@ func TestUpdate_ZeroResultSearchClearsStalePreview(t *testing.T) {
 		t.Fatalf("zero-result search main pane should show the empty copy:\n%s", got.mainContent())
 	}
 }
+
+func TestUpdate_SpaceTogglesCommitSelectionOnlyInCommits(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{
+		{Hash: "newest123456", Subject: "newest"},
+		{Hash: "older456789", Subject: "older"},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("commit selection should not dispatch")
+	}
+	if !got.selectedCommits["newest123456"] {
+		t.Fatalf("selectedCommits = %#v, want highlighted commit selected", got.selectedCommits)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	if updated.(Model).selectedCommits["newest123456"] {
+		t.Fatalf("second space should unselect commit: %#v", updated.(Model).selectedCommits)
+	}
+
+	m = newTestModel()
+	m.focus = PanelBranches
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	if len(updated.(Model).selectedCommits) != 0 || cmd != nil {
+		t.Fatalf("space outside Files/Commits should not mark commits or dispatch: state=%#v cmd=%v", updated.(Model).selectedCommits, cmd)
+	}
+}
+
+func TestUpdate_YWithNoSelectedCommitsShowsError(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{{Hash: "abc123", Subject: "pick me"}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("empty cherry-pick selection should not dispatch")
+	}
+	if got.mode != ModeNormal {
+		t.Fatalf("mode = %v, want normal", got.mode)
+	}
+	if got.err == nil || got.err.Error() != cherryPickNoSelection {
+		t.Fatalf("err = %v, want %q", got.err, cherryPickNoSelection)
+	}
+}
+
+func TestUpdate_YWithSelectedCommitsAndDirtyTreeShowsError(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.files = []git.FileStatus{{Path: "dirty.go", Worktree: 'M'}}
+	m.commits = []git.Commit{{Hash: "abc123", Subject: "pick me"}}
+	m.selectedCommits = map[string]bool{"abc123": true}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("dirty-tree gate should not dispatch")
+	}
+	if got.mode != ModeNormal {
+		t.Fatalf("mode = %v, want normal", got.mode)
+	}
+	if got.err == nil || got.err.Error() != cherryPickDirtyTree {
+		t.Fatalf("err = %v, want %q", got.err, cherryPickDirtyTree)
+	}
+}
+
+func TestUpdate_YWithSelectedCommitsEntersConfirmationInListOrder(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{
+		{Hash: "newest123456", Subject: "newest"},
+		{Hash: "middle23456", Subject: "middle"},
+		{Hash: "older345678", Subject: "older"},
+	}
+	m.selectedCommits = map[string]bool{
+		"older345678":  true,
+		"newest123456": true,
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("cherry-pick should wait for confirmation")
+	}
+	if got.mode != ModeConfirming {
+		t.Fatalf("mode = %v, want confirming", got.mode)
+	}
+	if got.confirm.prompt != "Cherry-pick 2 commits in list order? [y/n]" {
+		t.Fatalf("prompt = %q", got.confirm.prompt)
+	}
+
+	confirmed, cmd := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if !confirmed.(Model).busy {
+		t.Fatal("confirming cherry-pick should set busy")
+	}
+	if cmd == nil {
+		t.Fatal("expected cherry-pick command after confirmation")
+	}
+	done := cmd().(gitDoneMsg)
+	if done.cmd != "git cherry-pick" {
+		t.Fatalf("cmd = %q, want git cherry-pick", done.cmd)
+	}
+}
+
+func TestSelectedCommitHashesUseVisibleListOrder(t *testing.T) {
+	m := newTestModel()
+	m.commits = []git.Commit{
+		{Hash: "newest123456", Subject: "newest"},
+		{Hash: "middle23456", Subject: "middle"},
+		{Hash: "older345678", Subject: "older"},
+	}
+	m.selectedCommits = map[string]bool{
+		"older345678":  true,
+		"newest123456": true,
+	}
+
+	got := strings.Join(m.selectedCommitHashesInListOrder(), ",")
+	if got != "newest123456,older345678" {
+		t.Fatalf("ordered hashes = %q, want visible list order", got)
+	}
+}
+
+func TestUpdate_CommitLoadsClearSelectedCommits(t *testing.T) {
+	m := newTestModel()
+	m.selectedCommits = map[string]bool{"abc123": true}
+
+	updated, _ := m.Update(commitsLoadedMsg{commits: []git.Commit{{Hash: "def456", Subject: "new"}}})
+	if len(updated.(Model).selectedCommits) != 0 {
+		t.Fatalf("normal commit load should clear selection: %#v", updated.(Model).selectedCommits)
+	}
+
+	m = newTestModel()
+	m.selectedCommits = map[string]bool{"abc123": true}
+	updated, _ = m.Update(commitSearchLoadedMsg{commits: []git.Commit{{Hash: "def456", Subject: "search"}}})
+	if len(updated.(Model).selectedCommits) != 0 {
+		t.Fatalf("search commit load should clear selection: %#v", updated.(Model).selectedCommits)
+	}
+}
+
+func TestUpdate_CherryPickFailureRefreshesStatusAndShowsConflictMessage(t *testing.T) {
+	m := newTestModel()
+	m.busy = true
+	m.selectedCommits = map[string]bool{"abc123": true}
+
+	updated, cmd := m.Update(gitDoneMsg{
+		cmd:    "git cherry-pick",
+		output: "Auto-merging app.go\nCONFLICT (content): Merge conflict in app.go",
+		err:    errFake("git cherry-pick: exit status 1"),
+	})
+	got := updated.(Model)
+
+	if got.busy {
+		t.Fatal("failure should clear busy")
+	}
+	if got.err == nil || got.err.Error() != cherryPickStopped {
+		t.Fatalf("err = %v, want %q", got.err, cherryPickStopped)
+	}
+	if len(got.selectedCommits) != 0 {
+		t.Fatalf("selection should clear after failed cherry-pick: %#v", got.selectedCommits)
+	}
+	if cmd == nil {
+		t.Fatal("failed cherry-pick should refresh status so conflicts surface")
+	}
+	if _, ok := cmd().(statusLoadedMsg); !ok {
+		t.Fatalf("expected statusLoadedMsg refresh, got %T", cmd())
+	}
+}

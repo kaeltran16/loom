@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.commits = msg.commits
+		m.clearCommitSelection()
 		m.cursor[PanelCommits] = 0
 		m.scroll[PanelCommits] = 0
 		m.commitSearch.Active = true
@@ -60,6 +62,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commitsLoadedMsg:
 		m.busy = false // clears the busy set by clearCommitSearch; other loadCommits sites are already idle
 		m.commits = msg.commits
+		m.clearCommitSelection()
 		m.commitSearch.Active = false
 		m.commitSearch.Summary = ""
 		if m.cursor[PanelCommits] >= len(m.commits) {
@@ -142,6 +145,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text += " (canceled)"
 		}
 		m.cmdLog = append(m.cmdLog, cmdEntry{at: time.Now(), text: text, output: msg.output})
+		if msg.cmd == "git cherry-pick" {
+			m.clearCommitSelection()
+			if msg.err != nil {
+				m.err = errors.New(cherryPickStopped)
+				return m, loadStatus(m.ctx, m.repo)
+			}
+		}
 		switch {
 		case msg.canceled:
 			m.err = nil
@@ -291,7 +301,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case keyStage:
+		if m.focus == PanelCommits {
+			m.toggleCommitSelection()
+			return m, nil
+		}
 		return m.stageSelected()
+	case keyCherryPick:
+		return m.startCherryPick()
 	case keyStashSave:
 		return m.openStashMessage()
 	case keyStashApply:
