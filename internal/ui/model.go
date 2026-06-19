@@ -71,41 +71,42 @@ type cmdEntry struct {
 
 // Model is the entire application state.
 type Model struct {
-	ctx          context.Context
-	repo         *git.Repo
-	files        []git.FileStatus
-	branches     []git.Branch
-	commits      []git.Commit
-	stashes      []git.Stash
-	branch       git.BranchInfo
-	focus        Panel
-	mainFocused  bool // when true, j/k scroll the main pane instead of moving the list cursor
-	cursor       map[Panel]int
-	scroll       map[Panel]int
-	viewport     viewport.Model
-	mainLoading  bool // true while the main pane is waiting for the latest selection load
-	subject      textinput.Model
-	body         textarea.Model
-	stashMessage textinput.Model
-	commitQuery  textinput.Model
-	commitSearch commitSearchState
-	authors      []string
-	commitField  commitField
-	notice       string // transient success line; cleared on the next key
-	amending     bool   // the current ModeCommitting session is a git commit --amend
-	spinner      spinner.Model
-	mode         Mode
-	confirm      confirmReq
-	busy         bool
-	merging      bool // a merge is in progress (MERGE_HEAD exists)
-	cmdLog       []cmdEntry
-	showLog      bool
-	showHelp     bool
-	err          error
-	w, h         int
-	listHeight   int
-	reqSeq       int                // monotonic token stamped on each main-pane load
-	cancelOp     context.CancelFunc // cancels the in-flight remote op; nil when none
+	ctx             context.Context
+	repo            *git.Repo
+	files           []git.FileStatus
+	branches        []git.Branch
+	commits         []git.Commit
+	stashes         []git.Stash
+	branch          git.BranchInfo
+	focus           Panel
+	mainFocused     bool // when true, j/k scroll the main pane instead of moving the list cursor
+	cursor          map[Panel]int
+	scroll          map[Panel]int
+	viewport        viewport.Model
+	mainLoading     bool // true while the main pane is waiting for the latest selection load
+	subject         textinput.Model
+	body            textarea.Model
+	stashMessage    textinput.Model
+	commitQuery     textinput.Model
+	selectedCommits map[string]bool
+	commitSearch    commitSearchState
+	authors         []string
+	commitField     commitField
+	notice          string // transient success line; cleared on the next key
+	amending        bool   // the current ModeCommitting session is a git commit --amend
+	spinner         spinner.Model
+	mode            Mode
+	confirm         confirmReq
+	busy            bool
+	merging         bool // a merge is in progress (MERGE_HEAD exists)
+	cmdLog          []cmdEntry
+	showLog         bool
+	showHelp        bool
+	err             error
+	w, h            int
+	listHeight      int
+	reqSeq          int                // monotonic token stamped on each main-pane load
+	cancelOp        context.CancelFunc // cancels the in-flight remote op; nil when none
 }
 
 // confirmReq describes a pending destructive action awaiting [y/n].
@@ -127,20 +128,21 @@ func NewModel(ctx context.Context, repo *git.Repo) Model {
 	query := textinput.New()
 	query.Placeholder = "Search commit messages..."
 	return Model{
-		ctx:          ctx,
-		repo:         repo,
-		focus:        PanelFiles,
-		cursor:       map[Panel]int{},
-		scroll:       map[Panel]int{},
-		viewport:     viewport.New(0, 0),
-		subject:      subj,
-		body:         body,
-		stashMessage: stashMsg,
-		commitQuery:  query,
-		commitSearch: commitSearchState{Author: "Any"},
-		authors:      nil,
-		spinner:      sp,
-		mode:         ModeNormal,
+		ctx:             ctx,
+		repo:            repo,
+		focus:           PanelFiles,
+		cursor:          map[Panel]int{},
+		scroll:          map[Panel]int{},
+		viewport:        viewport.New(0, 0),
+		subject:         subj,
+		body:            body,
+		stashMessage:    stashMsg,
+		commitQuery:     query,
+		selectedCommits: map[string]bool{},
+		commitSearch:    commitSearchState{Author: "Any"},
+		authors:         nil,
+		spinner:         sp,
+		mode:            ModeNormal,
 	}
 }
 

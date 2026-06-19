@@ -23,6 +23,7 @@ const (
 	keyEnter        = "enter"
 	keyCommit       = "c"
 	keyAmend        = "C"
+	keyCherryPick   = "y"
 	keyStashSave    = "s"
 	keyStashApply   = "a"
 	keyStashPop     = "o"

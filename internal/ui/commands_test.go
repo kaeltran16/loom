@@ -219,6 +219,48 @@ func TestStashActionCommandsKeepOutput(t *testing.T) {
 	}
 }
 
+func TestCherryPickCmd_successKeepsOutputAndNotice(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("[main abc123] picked\n")})
+
+	msg := cherryPick(context.Background(), repo, []string{"abc123", "def456"})().(gitDoneMsg)
+
+	if msg.cmd != "git cherry-pick" {
+		t.Fatalf("cmd = %q, want git cherry-pick", msg.cmd)
+	}
+	if msg.output != "[main abc123] picked" {
+		t.Fatalf("output = %q, want trimmed git output", msg.output)
+	}
+	if msg.notice != "Cherry-picked 2 commits" {
+		t.Fatalf("notice = %q", msg.notice)
+	}
+	if msg.err != nil {
+		t.Fatalf("unexpected error: %v", msg.err)
+	}
+}
+
+func TestCherryPickCmd_failureKeepsOutputAndError(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{
+		Stdout: []byte("Auto-merging app.go\n"),
+		Stderr: []byte("CONFLICT (content): Merge conflict in app.go\n"),
+		Err:    errFake("exit status 1"),
+	})
+
+	msg := cherryPick(context.Background(), repo, []string{"abc123"})().(gitDoneMsg)
+
+	if msg.cmd != "git cherry-pick" {
+		t.Fatalf("cmd = %q, want git cherry-pick", msg.cmd)
+	}
+	if !strings.Contains(msg.output, "Auto-merging") || !strings.Contains(msg.output, "CONFLICT") {
+		t.Fatalf("output = %q, want combined conflict output", msg.output)
+	}
+	if msg.err == nil {
+		t.Fatal("expected error")
+	}
+	if msg.notice != "" {
+		t.Fatalf("failure notice = %q, want empty", msg.notice)
+	}
+}
+
 func TestLoadCommitAuthorsCmd_returnsCommitAuthorsLoadedMsg(t *testing.T) {
 	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("Kael\nAlex\n")})
 

@@ -153,6 +153,20 @@ func mergeAbort(ctx context.Context, repo *git.Repo) tea.Cmd {
 	return mutation("git merge --abort", func() error { return repo.MergeAbort(ctx) })
 }
 
+func cherryPick(ctx context.Context, repo *git.Repo, hashes []string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := repo.CherryPick(ctx, hashes)
+		if err != nil {
+			return gitDoneMsg{cmd: "git cherry-pick", output: out, err: err}
+		}
+		return gitDoneMsg{
+			cmd:    "git cherry-pick",
+			output: out,
+			notice: fmt.Sprintf("Cherry-picked %d commits", len(hashes)),
+		}
+	}
+}
+
 func stashPush(ctx context.Context, repo *git.Repo, message string) tea.Cmd {
 	return func() tea.Msg {
 		out, err := repo.StashPush(ctx, message)
