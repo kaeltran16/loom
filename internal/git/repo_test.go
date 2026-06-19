@@ -186,6 +186,66 @@ func TestRepo_MergeAbort_args(t *testing.T) {
 	}
 }
 
+func TestRepo_CherryPick_buildsArgsInOrderAndReturnsOutput(t *testing.T) {
+	fr := &fakeRunner{
+		stdout: []byte("[main abc123] first\n"),
+		stderr: []byte(""),
+	}
+	repo := &Repo{runner: fr}
+
+	out, err := repo.CherryPick(context.Background(), []string{"newest123", "older456"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantArgs := []string{"cherry-pick", "newest123", "older456"}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+	if out != "[main abc123] first" {
+		t.Errorf("output = %q, want trimmed stdout", out)
+	}
+}
+
+func TestRepo_CherryPick_rejectsEmptyHashList(t *testing.T) {
+	fr := &fakeRunner{}
+	repo := &Repo{runner: fr}
+
+	out, err := repo.CherryPick(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for empty cherry-pick input")
+	}
+	if out != "" {
+		t.Fatalf("output = %q, want empty", out)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("runner calls = %v, want none", fr.calls)
+	}
+	if !strings.Contains(err.Error(), "no commits selected") {
+		t.Fatalf("error = %v, want empty-selection context", err)
+	}
+}
+
+func TestRepo_CherryPick_failureReturnsCombinedOutputAndCommandError(t *testing.T) {
+	fr := &fakeRunner{
+		stdout: []byte("Auto-merging app.go\n"),
+		stderr: []byte("CONFLICT (content): Merge conflict in app.go\n"),
+		err:    errors.New("exit status 1"),
+	}
+	repo := &Repo{runner: fr}
+
+	out, err := repo.CherryPick(context.Background(), []string{"abc123"})
+	if err == nil {
+		t.Fatal("expected cherry-pick failure")
+	}
+	if !strings.Contains(out, "Auto-merging app.go") || !strings.Contains(out, "CONFLICT") {
+		t.Fatalf("output = %q, want stdout and stderr", out)
+	}
+	if !strings.Contains(err.Error(), "git cherry-pick") {
+		t.Fatalf("error = %v, want command context", err)
+	}
+}
+
 func TestRepo_Merging_trueWhenRevParseSucceeds(t *testing.T) {
 	fr := &fakeRunner{}
 	got, err := (&Repo{runner: fr}).Merging(context.Background())

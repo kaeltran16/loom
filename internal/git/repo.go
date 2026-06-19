@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -137,6 +138,19 @@ func (r *Repo) Switch(ctx context.Context, branch string) error {
 // MergeAbort cancels an in-progress merge, restoring the pre-merge state.
 func (r *Repo) MergeAbort(ctx context.Context) error {
 	return r.mutate(ctx, nil, "merge", "--abort")
+}
+
+func (r *Repo) CherryPick(ctx context.Context, hashes []string) (string, error) {
+	if len(hashes) == 0 {
+		return "", errors.New("git cherry-pick: no commits selected")
+	}
+	args := append([]string{"cherry-pick"}, hashes...)
+	out, errb, err := r.runner.Run(ctx, nil, args...)
+	combined := strings.TrimSpace(string(out) + "\n" + string(errb))
+	if err != nil {
+		return combined, fmt.Errorf("git cherry-pick: %w", err)
+	}
+	return combined, nil
 }
 
 // Merging reports whether a merge is in progress (a MERGE_HEAD ref exists).
