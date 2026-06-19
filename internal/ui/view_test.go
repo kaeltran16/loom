@@ -313,7 +313,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 			setup: func(m *Model) {
 				m.focus = PanelCommits
 			},
-			want: "Commits: / search · c commit · f fetch · p pull · P push · ? help · q quit",
+			want: "Commits: space mark · y cherry-pick · / search · c commit · f fetch · p pull · P push · ? help · q quit",
 		},
 		{
 			name: "stashes focus",
@@ -388,6 +388,15 @@ func TestFooterByState(t *testing.T) {
 	failed.err = errFake("git push failed")
 	if got := failed.footer(false); !strings.Contains(got, "error: git push failed") {
 		t.Fatalf("narrow error footer = %q, want error summary", got)
+	}
+}
+
+func TestFooterActionsCommitsShowsCherryPickHints(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+
+	if got := m.footerActions(); got != "Commits: space mark · y cherry-pick · / search · c commit · f fetch · p pull · P push · ? help · q quit" {
+		t.Fatalf("footerActions = %q", got)
 	}
 }
 
@@ -536,7 +545,7 @@ func TestSelectedContextLines(t *testing.T) {
 				m.focus = PanelCommits
 				m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "focus mode"}}
 			},
-			want: []string{"abcdef1", "focus mode", "actions: / search, c commit, fetch, pull, push"},
+			want: []string{"abcdef1", "focus mode", "actions: space mark, y cherry-pick, / search, c commit, fetch, pull, push"},
 		},
 	}
 
@@ -610,6 +619,20 @@ func TestSelectedContextLinesShowsCommitMetadata(t *testing.T) {
 	}
 }
 
+func TestSelectedContextLinesShowsCherryPickSelectionCount(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "fix auth"}}
+	m.selectedCommits = map[string]bool{"abcdef123456": true}
+
+	got := strings.Join(m.selectedContextLines(), "\n")
+	for _, want := range []string{"abcdef1", "fix auth", "Cherry-pick: 1 selected", "actions: space mark, y cherry-pick, / search, c commit, fetch, pull, push"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("selected context missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSelectedContextLinesShowsStashActions(t *testing.T) {
 	m := newTestModel()
 	m.focus = PanelStashes
@@ -667,6 +690,18 @@ func TestStatusRailContentShowsError(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("statusRailContent missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestStatusRailContentShowsCherryPickSelection(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "fix auth"}}
+	m.selectedCommits = map[string]bool{"abcdef123456": true}
+
+	got := m.statusRailContent()
+	if !strings.Contains(got, "Cherry-pick: 1 selected") {
+		t.Fatalf("status rail missing cherry-pick selection:\n%s", got)
 	}
 }
 
@@ -1006,7 +1041,19 @@ func TestSelectedContextLinesShowsSearchActionsForCommits(t *testing.T) {
 	m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "fix auth"}}
 
 	got := strings.Join(m.selectedContextLines(), "\n")
-	if !strings.Contains(got, "actions: / search, c commit, fetch, pull, push") {
+	if !strings.Contains(got, "actions: space mark, y cherry-pick, / search, c commit, fetch, pull, push") {
 		t.Fatalf("selected context missing search action:\n%s", got)
+	}
+}
+
+func TestHelpOverlayShowsCherryPickKeys(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 100, 30
+
+	got := m.helpOverlay()
+	for _, want := range []string{"space           stage / unstage file, or mark commit", "y               cherry-pick marked commits from Commits"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("help overlay missing %q:\n%s", want, got)
+		}
 	}
 }

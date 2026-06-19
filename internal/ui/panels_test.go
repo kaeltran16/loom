@@ -223,6 +223,32 @@ func TestStyledPanelLinesWrapsCommitRowsTheSameWhenSelected(t *testing.T) {
 	}
 }
 
+func TestStyledPanelRowsHighlightsMarkedCommitWhenCursorMovesAway(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{
+		{Hash: "abc123456789", Subject: "picked commit"},
+		{Hash: "def456789abc", Subject: "cursor commit"},
+	}
+	m.selectedCommits = map[string]bool{"abc123456789": true}
+	m.cursor[PanelCommits] = 1
+
+	const width = 34
+	styled := m.styledPanelRows(PanelCommits, m.panelRows(PanelCommits), width)
+	if len(styled) != 2 {
+		t.Fatalf("styled rows len = %d, want 2", len(styled))
+	}
+	if !strings.Contains(styled[0], "* abc1234 picked commit") {
+		t.Fatalf("marked commit row missing marker and text: %q", styled[0])
+	}
+	if w := lipgloss.Width(styled[0]); w != width {
+		t.Fatalf("marked commit row width = %d, want full-width highlight %d", w, width)
+	}
+	if !strings.Contains(styled[1], "def4567 cursor commit") {
+		t.Fatalf("cursor row missing commit text: %q", styled[1])
+	}
+}
+
 func TestListPaneYieldsFocusToMainPane(t *testing.T) {
 	m := newTestModel()
 	m.focus = PanelFiles

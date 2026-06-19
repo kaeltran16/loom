@@ -22,6 +22,9 @@ var (
 	cursorStyle = lipgloss.NewStyle().
 			Background(lipgloss.Color("237")).
 			Foreground(lipgloss.Color("15"))
+	markedCommitStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("15"))
 	mutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	addStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	delStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -193,7 +196,11 @@ func (m Model) panelRows(p Panel) []panelRow {
 		}
 		rows := make([]panelRow, len(m.commits))
 		for i, c := range m.commits {
-			rows[i] = panelRow{text: commitLine(c), kind: panelRowItem, itemIndex: i}
+			marker := "  "
+			if m.commitSelected(c.Hash) {
+				marker = "* "
+			}
+			rows[i] = panelRow{text: marker + commitLine(c), kind: panelRowItem, itemIndex: i}
 		}
 		return rows
 	case PanelStashes:
@@ -299,6 +306,13 @@ func (m Model) styledPanelRows(p Panel, rows []panelRow, width int) []string {
 				bar += strings.Repeat(" ", pad)
 			}
 			out = append(out, cursorStyle.Inline(true).MaxWidth(width).Render(bar))
+			continue
+		}
+
+		if p == PanelCommits && row.itemIndex >= 0 && row.itemIndex < len(m.commits) &&
+			m.commitSelected(m.commits[row.itemIndex].Hash) {
+			bar := normalizePanelRowText(caretGutter + row.text)
+			out = append(out, markedCommitStyle.Width(width).Render(bar))
 			continue
 		}
 

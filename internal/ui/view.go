@@ -114,7 +114,8 @@ func (m Model) helpOverlay() string {
 		"j/k or ↑/↓      move cursor (scroll the diff when in it)",
 		"g / G           diff: jump to top / bottom",
 		"l / h           enter diff pane / back to list",
-		"space           stage / unstage file",
+		"space           stage / unstage file, or mark commit",
+		"y               cherry-pick marked commits from Commits",
 		"d               discard (confirm y)",
 		"s               save stash from Stashes",
 		"a / o / d       apply / pop / drop selected stash",
@@ -287,7 +288,10 @@ func (m Model) selectedContextLines() []string {
 		if meta := commitMeta(c.Author, c.RelTime); meta != "" {
 			lines = append(lines, meta)
 		}
-		return append(lines, "actions: / search, c commit, fetch, pull, push")
+		if n := m.selectedCommitCount(); n > 0 {
+			lines = append(lines, fmt.Sprintf("Cherry-pick: %d selected", n))
+		}
+		return append(lines, "actions: space mark, y cherry-pick, / search, c commit, fetch, pull, push")
 	case PanelStashes:
 		s, ok := m.selectedStash()
 		if !ok {
@@ -780,7 +784,7 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 	case PanelBranches:
 		return "Branches", []keyHint{{"enter", "switch"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
 	case PanelCommits:
-		return "Commits", []keyHint{{"/", "search"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
+		return "Commits", []keyHint{{"space", "mark"}, {"y", "cherry-pick"}, {"/", "search"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
 	case PanelStashes:
 		return "Stashes", []keyHint{{"s", "save"}, {"a", "apply"}, {"o", "pop"}, {"d", "drop"}, {"?", "help"}, {"q", "quit"}}
 	default:
