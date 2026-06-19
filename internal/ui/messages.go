@@ -37,3 +37,15 @@ type amendPrefillMsg struct {
 // editorDoneMsg reports that the external editor launched for a conflicted file
 // has exited.
 type editorDoneMsg struct{ err error }
+
+type commitAuthorsLoadedMsg struct {
+	branch  string
+	authors []string
+	err     error
+}
+
+type commitSearchLoadedMsg struct {
+	commits []git.Commit
+	summary string
+	err     error
+}

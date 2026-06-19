@@ -59,6 +59,44 @@ func (r *Repo) Log(ctx context.Context, ref string, n int) ([]Commit, error) {
 	return parseLog(out), nil
 }
 
+func (r *Repo) SearchCommits(ctx context.Context, q CommitSearch) ([]Commit, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	args := []string{"log", "--format=%H%x00%s%x00%an%x00%ar", "-n", strconv.Itoa(limit)}
+	if strings.TrimSpace(q.Author) != "" && q.Author != "Any" {
+		args = append(args, "--author="+q.Author)
+	}
+	if strings.TrimSpace(q.Query) != "" {
+		// literal, case-insensitive match so the box behaves like a search box, not a regex
+		args = append(args, "-i", "--fixed-strings", "--grep="+q.Query)
+	}
+	if strings.TrimSpace(q.Ref) != "" {
+		args = append(args, q.Ref)
+	}
+	out, errb, err := r.runner.Run(ctx, nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("git log search: %w: %s", err, strings.TrimSpace(string(errb)))
+	}
+	return parseLog(out), nil
+}
+
+func (r *Repo) CommitAuthors(ctx context.Context, ref string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	args := []string{"log", "--format=%an", "-n", strconv.Itoa(limit)}
+	if strings.TrimSpace(ref) != "" {
+		args = append(args, ref)
+	}
+	out, errb, err := r.runner.Run(ctx, nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("git log authors: %w: %s", err, strings.TrimSpace(string(errb)))
+	}
+	return parseAuthors(out), nil
+}
+
 func (r *Repo) Diff(ctx context.Context, path string, staged bool) (string, error) {
 	args := []string{"diff"}
 	if staged {

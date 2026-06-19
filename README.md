@@ -32,6 +32,8 @@ loom is read-only until you act: nothing is staged, committed, or pushed without
 | `s` | save current work as a stash from Files or Stashes |
 | `a` `o` `d` | apply / pop / drop selected stash |
 | `enter` | switch to the selected branch |
+| `/` | open commit search from Commits |
+| `Tab` / `j` `k` / `Enter` / `Esc` | search mode: switch fields / choose branch or author / apply / cancel |
 | `c` | commit (type message, `Ctrl-D` to confirm, `Esc` to cancel) |
 | `C` | amend last commit (edit message, `Ctrl-D` to confirm) |
 | `f` `p` `P` | fetch / pull / push |

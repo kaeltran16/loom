@@ -26,8 +26,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case branchesLoadedMsg:
 		m.branches = msg.branches
 		return m, nil
-	case commitsLoadedMsg:
+	case commitAuthorsLoadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		if msg.branch == m.commitSearch.Branch {
+			m.authors = msg.authors
+			m.syncCommitSearchSelection()
+		}
+		return m, nil
+	case commitSearchLoadedMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
 		m.commits = msg.commits
+		m.cursor[PanelCommits] = 0
+		m.scroll[PanelCommits] = 0
+		m.commitSearch.Active = true
+		m.commitSearch.Summary = msg.summary
+		if m.focus == PanelCommits {
+			updated, cmd := m.reloadMain()
+			if len(updated.commits) == 0 {
+				// no commit to preview; clear the stale diff so mainContent shows the empty-pane copy
+				updated.viewport.SetContent("")
+			}
+			return updated, cmd
+		}
+		return m, nil
+	case commitsLoadedMsg:
+		m.busy = false // clears the busy set by clearCommitSearch; other loadCommits sites are already idle
+		m.commits = msg.commits
+		m.commitSearch.Active = false
+		m.commitSearch.Summary = ""
+		if m.cursor[PanelCommits] >= len(m.commits) {
+			if len(m.commits) == 0 {
+				m.cursor[PanelCommits] = 0
+			} else {
+				m.cursor[PanelCommits] = len(m.commits) - 1
+			}
+		}
+		// when the Commits panel is focused (e.g. after clearing a search), refresh
+		// the preview so the highlighted commit and the diff pane match. Mirrors
+		// stashesLoadedMsg; redundant with statusLoadedMsg's reload after a mutation,
+		// but reloadMain's request token drops the stale load.
+		if m.focus == PanelCommits {
+			updated, cmd := m.reloadMain()
+			if len(updated.commits) == 0 {
+				// no commit to preview; clear the stale diff so mainContent shows the empty-pane copy
+				updated.viewport.SetContent("")
+			}
+			return updated, cmd
+		}
 		return m, nil
 	case stashesLoadedMsg:
 		m.stashes = msg.stashes
@@ -171,13 +224,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.mode == ModeCommitSearch {
+		return m.handleCommitSearchKey(msg)
+	}
+
 	switch msg.String() {
 	case keyQuit, keyQuitAlt:
 		return m, tea.Quit
 	case keyCancel:
-		// abort an in-flight remote op; harmless no-op otherwise
 		if m.busy && m.cancelOp != nil {
 			m.cancelOp()
+			return m, nil
+		}
+		if m.focus == PanelCommits && m.commitSearch.Active {
+			return m.clearCommitSearch()
 		}
 		return m, nil
 	case keyTab:
@@ -255,6 +315,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyEditConflict:
 		return m.editConflict()
+	case keySearch:
+		return m.openCommitSearch()
 	case keyCommit:
 		m.mode = ModeCommitting
 		m.commitField = fieldSubject
@@ -286,6 +348,48 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleCommitSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		return m.applyCommitSearch()
+	case tea.KeyEsc:
+		m.resetCommitSearchEditor()
+		return m, nil
+	case tea.KeyTab:
+		m.nextCommitSearchField(1)
+		return m, nil
+	case tea.KeyShiftTab:
+		m.nextCommitSearchField(-1)
+		return m, nil
+	}
+
+	switch msg.String() {
+	case keyDown, keyDownAlt:
+		if m.commitSearch.Field == searchFieldQuery {
+			break
+		}
+		if m.moveCommitSearchChoice(1) {
+			return m, loadCommitAuthors(m.ctx, m.repo, m.commitSearch.Branch)
+		}
+		return m, nil
+	case keyUp, keyUpAlt:
+		if m.commitSearch.Field == searchFieldQuery {
+			break
+		}
+		if m.moveCommitSearchChoice(-1) {
+			return m, loadCommitAuthors(m.ctx, m.repo, m.commitSearch.Branch)
+		}
+		return m, nil
+	}
+
+	if m.commitSearch.Field == searchFieldQuery {
+		var cmd tea.Cmd
+		m.commitQuery, cmd = m.commitQuery.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }

@@ -12,3 +12,17 @@ func TestParseLog(t *testing.T) {
 		t.Errorf("commit[0] wrong: %+v", got[0])
 	}
 }
+
+func TestParseAuthorsDedupesSortsAndSkipsBlank(t *testing.T) {
+	in := []byte("Kael\nAlex\nKael\n\nMorgan\n")
+	got := parseAuthors(in)
+	want := []string{"Alex", "Kael", "Morgan"}
+	if len(got) != len(want) {
+		t.Fatalf("authors len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("authors[%d] = %q, want %q; all=%#v", i, got[i], want[i], got)
+		}
+	}
+}

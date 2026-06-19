@@ -313,7 +313,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 			setup: func(m *Model) {
 				m.focus = PanelCommits
 			},
-			want: "Commits: c commit · f fetch · p pull · P push · ? help · q quit",
+			want: "Commits: / search · c commit · f fetch · p pull · P push · ? help · q quit",
 		},
 		{
 			name: "stashes focus",
@@ -536,7 +536,7 @@ func TestSelectedContextLines(t *testing.T) {
 				m.focus = PanelCommits
 				m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "focus mode"}}
 			},
-			want: []string{"abcdef1", "focus mode", "actions: commit, fetch, pull, push"},
+			want: []string{"abcdef1", "focus mode", "actions: / search, c commit, fetch, pull, push"},
 		},
 	}
 
@@ -944,5 +944,69 @@ func TestSelectedContextShowsConflictKind(t *testing.T) {
 	joined := strings.Join(m.selectedContextLines(), "\n")
 	if !strings.Contains(joined, "conflict: both modified") {
 		t.Errorf("selected context = %q, want conflict kind", joined)
+	}
+}
+
+func TestCommitSearchEditorViewShowsFieldsAndSelections(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	m.mode = ModeCommitSearch
+	m.commitSearch.Field = searchFieldQuery
+	m.commitSearch.Branch = "main"
+	m.commitSearch.Author = "Kael"
+	m.commitQuery.SetValue("fix auth")
+
+	got := m.View()
+	for _, want := range []string{"Commit Search", "Query", "fix auth", "Branch", "main", "Author", "Kael", "Enter search", "Esc cancel"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("commit search view missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFooterActionsCommitSearchMode(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitSearch
+
+	if got := m.footerActions(); got != "Search: enter apply · tab switch · j/k choose · esc cancel" {
+		t.Fatalf("footerActions = %q", got)
+	}
+}
+
+func TestTopBarShowsCommitSearchSummary(t *testing.T) {
+	m := newTestModel()
+	m.branch = git.BranchInfo{Name: "main"}
+	m.commitSearch.Active = true
+	m.commitSearch.Summary = `Search: "fix" | branch main`
+
+	got := m.topBar()
+	if !strings.Contains(got, `Search: "fix" | branch main`) {
+		t.Fatalf("topBar missing search summary:\n%s", got)
+	}
+}
+
+func TestStatusRailContentShowsActiveCommitSearch(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commitSearch.Active = true
+	m.commitSearch.Summary = `Search: "fix" | branch main`
+
+	got := m.statusRailContent()
+	for _, want := range []string{"Commit Search", `Search: "fix" | branch main`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status rail missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSelectedContextLinesShowsSearchActionsForCommits(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "fix auth"}}
+
+	got := strings.Join(m.selectedContextLines(), "\n")
+	if !strings.Contains(got, "actions: / search, c commit, fetch, pull, push") {
+		t.Fatalf("selected context missing search action:\n%s", got)
 	}
 }

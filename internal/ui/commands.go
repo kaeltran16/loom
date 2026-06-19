@@ -43,6 +43,34 @@ func loadCommits(ctx context.Context, repo *git.Repo) tea.Cmd {
 	}
 }
 
+func loadCommitAuthors(ctx context.Context, repo *git.Repo, ref string) tea.Cmd {
+	return func() tea.Msg {
+		authors, err := repo.CommitAuthors(ctx, ref, defaultCommitAuthorsLimit)
+		return commitAuthorsLoadedMsg{branch: ref, authors: authors, err: err}
+	}
+}
+
+func searchCommits(ctx context.Context, repo *git.Repo, q git.CommitSearch) tea.Cmd {
+	return func() tea.Msg {
+		commits, err := repo.SearchCommits(ctx, q)
+		return commitSearchLoadedMsg{commits: commits, summary: commitSearchSummary(q), err: err}
+	}
+}
+
+func commitSearchSummary(q git.CommitSearch) string {
+	var parts []string
+	if strings.TrimSpace(q.Query) != "" {
+		parts = append(parts, fmt.Sprintf("%q", strings.TrimSpace(q.Query)))
+	}
+	if strings.TrimSpace(q.Ref) != "" {
+		parts = append(parts, "branch "+q.Ref)
+	}
+	if strings.TrimSpace(q.Author) != "" && q.Author != authorAny {
+		parts = append(parts, "author "+q.Author)
+	}
+	return "Search: " + strings.Join(parts, " | ")
+}
+
 func loadStashes(ctx context.Context, repo *git.Repo) tea.Cmd {
 	return func() tea.Msg {
 		ss, err := repo.Stashes(ctx)

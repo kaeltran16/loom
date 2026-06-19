@@ -218,3 +218,45 @@ func TestStashActionCommandsKeepOutput(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadCommitAuthorsCmd_returnsCommitAuthorsLoadedMsg(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("Kael\nAlex\n")})
+
+	msg := loadCommitAuthors(context.Background(), repo, "main")()
+
+	got, ok := msg.(commitAuthorsLoadedMsg)
+	if !ok {
+		t.Fatalf("want commitAuthorsLoadedMsg, got %T", msg)
+	}
+	if got.branch != "main" {
+		t.Fatalf("branch = %q, want main", got.branch)
+	}
+	if strings.Join(got.authors, ",") != "Alex,Kael" {
+		t.Fatalf("authors = %#v, want sorted authors", got.authors)
+	}
+}
+
+func TestSearchCommitsCmd_returnsCommitSearchLoadedMsg(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("abc123\x00fix auth\x00Kael\x002 hours ago\n")})
+	q := git.CommitSearch{Query: "fix", Ref: "main", Author: "Kael", Limit: 50}
+
+	msg := searchCommits(context.Background(), repo, q)()
+
+	got, ok := msg.(commitSearchLoadedMsg)
+	if !ok {
+		t.Fatalf("want commitSearchLoadedMsg, got %T", msg)
+	}
+	if len(got.commits) != 1 || got.commits[0].Hash != "abc123" {
+		t.Fatalf("commits = %#v", got.commits)
+	}
+	if got.summary != `Search: "fix" | branch main | author Kael` {
+		t.Fatalf("summary = %q", got.summary)
+	}
+}
+
+func TestCommitSearchSummaryOmitsAnyAuthorAndEmptyQuery(t *testing.T) {
+	q := git.CommitSearch{Ref: "main", Author: "Any"}
+	if got := commitSearchSummary(q); got != "Search: branch main" {
+		t.Fatalf("summary = %q, want Search: branch main", got)
+	}
+}

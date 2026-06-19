@@ -327,3 +327,14 @@ func TestConflictLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestCommitPanelEmptyCopyReflectsActiveSearch(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commitSearch.Active = true
+
+	got := m.panelLines(PanelCommits)
+	if len(got) != 1 || got[0] != "No commits match search" {
+		t.Fatalf("commit panel empty search lines = %#v", got)
+	}
+}

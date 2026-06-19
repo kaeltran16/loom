@@ -293,3 +293,73 @@ func TestRepo_StashApplyFailureReturnsOutputAndError(t *testing.T) {
 		t.Fatalf("error = %v, want command context", err)
 	}
 }
+
+func TestRepo_SearchCommits_buildsGitLogArgs(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("abc123\x00fix auth\x00Kael\x002 hours ago\n")}
+	repo := &Repo{runner: fr}
+
+	got, err := repo.SearchCommits(context.Background(), CommitSearch{
+		Query:  "fix auth",
+		Ref:    "feature/search",
+		Author: "Kael",
+		Limit:  25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantArgs := []string{
+		"log",
+		"--format=%H%x00%s%x00%an%x00%ar",
+		"-n", "25",
+		"--author=Kael",
+		"-i", "--fixed-strings",
+		"--grep=fix auth",
+		"feature/search",
+	}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+	if len(got) != 1 || got[0].Hash != "abc123" || got[0].Subject != "fix auth" {
+		t.Fatalf("commits = %#v", got)
+	}
+}
+
+func TestRepo_SearchCommits_omitsEmptyQueryAuthorAndUsesDefaultLimit(t *testing.T) {
+	fr := &fakeRunner{}
+	repo := &Repo{runner: fr}
+
+	_, err := repo.SearchCommits(context.Background(), CommitSearch{Ref: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantArgs := []string{
+		"log",
+		"--format=%H%x00%s%x00%an%x00%ar",
+		"-n", "50",
+		"main",
+	}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+}
+
+func TestRepo_CommitAuthors_buildsGitLogArgsAndParses(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("Kael\nAlex\nKael\n")}
+	repo := &Repo{runner: fr}
+
+	got, err := repo.CommitAuthors(context.Background(), "main", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantArgs := []string{"log", "--format=%an", "-n", "200", "main"}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+	want := []string{"Alex", "Kael"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("authors = %#v, want %#v", got, want)
+	}
+}

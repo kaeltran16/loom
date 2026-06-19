@@ -34,4 +34,5 @@ const (
 	keyLog          = "x"
 	keyConfirm      = "y"
 	keyCancel       = "esc"
+	keySearch       = "/"
 )

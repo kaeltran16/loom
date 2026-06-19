@@ -997,3 +997,228 @@ func TestUpdate_StashActionWithNoSelectionIsNoop(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdate_SlashOpensCommitSearchOnlyFromCommits(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+
+	unchanged, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if unchanged.(Model).mode != ModeNormal || cmd != nil {
+		t.Fatalf("slash outside Commits should be ignored, mode=%v cmd=%v", unchanged.(Model).mode, cmd)
+	}
+
+	m.focus = PanelCommits
+	m.branch = git.BranchInfo{Name: "main"}
+	opened, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	got := opened.(Model)
+	if got.mode != ModeCommitSearch {
+		t.Fatalf("mode = %v, want ModeCommitSearch", got.mode)
+	}
+	if got.commitSearch.Field != searchFieldQuery || !got.commitQuery.Focused() {
+		t.Fatalf("search field=%v focused=%v, want query focused", got.commitSearch.Field, got.commitQuery.Focused())
+	}
+	if cmd == nil {
+		t.Fatal("opening search should load authors for the selected branch")
+	}
+	if msg := cmd().(commitAuthorsLoadedMsg); msg.branch != "main" {
+		t.Fatalf("author load branch = %q, want main", msg.branch)
+	}
+}
+
+func TestUpdate_CommitSearchTabCyclesFields(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitSearch
+	m.commitSearch.Field = searchFieldQuery
+	m.commitQuery.Focus()
+
+	tabbed, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := tabbed.(Model).commitSearch.Field; got != searchFieldBranch {
+		t.Fatalf("field after Tab = %v, want branch", got)
+	}
+
+	back, _ := tabbed.(Model).Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := back.(Model).commitSearch.Field; got != searchFieldQuery {
+		t.Fatalf("field after Shift+Tab = %v, want query", got)
+	}
+}
+
+func TestUpdate_CommitSearchBranchMovementLoadsAuthors(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitSearch
+	m.branches = []git.Branch{{Name: "main", Current: true}, {Name: "feature/search"}}
+	m.commitSearch.Branch = "main"
+	m.commitSearch.BranchCursor = 0
+	m.commitSearch.Field = searchFieldBranch
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	got := updated.(Model)
+	if got.commitSearch.Branch != "feature/search" {
+		t.Fatalf("branch = %q, want feature/search", got.commitSearch.Branch)
+	}
+	if got.commitSearch.Author != authorAny {
+		t.Fatalf("author = %q, want reset to Any", got.commitSearch.Author)
+	}
+	if cmd == nil {
+		t.Fatal("branch movement should reload authors")
+	}
+	if msg := cmd().(commitAuthorsLoadedMsg); msg.branch != "feature/search" {
+		t.Fatalf("author load branch = %q", msg.branch)
+	}
+}
+
+func TestUpdate_CommitSearchEnterDispatchesSearch(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitSearch
+	m.branch = git.BranchInfo{Name: "main"}
+	m.authors = []string{"Kael"}
+	m.commitSearch.Branch = "main"
+	m.commitSearch.Author = "Kael"
+	m.commitQuery.SetValue("fix auth")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.mode != ModeNormal || !got.busy {
+		t.Fatalf("mode=%v busy=%v, want normal busy", got.mode, got.busy)
+	}
+	if cmd == nil {
+		t.Fatal("expected search command")
+	}
+	msg := cmd().(commitSearchLoadedMsg)
+	if msg.summary != `Search: "fix auth" | branch main | author Kael` {
+		t.Fatalf("summary = %q", msg.summary)
+	}
+}
+
+func TestUpdate_CommitSearchLoadedSetsActiveAndReloadsPreview(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.busy = true
+	msg := commitSearchLoadedMsg{
+		commits: []git.Commit{{Hash: "abcdef123456", Subject: "fix auth"}},
+		summary: `Search: "fix" | branch main`,
+	}
+
+	updated, cmd := m.Update(msg)
+	got := updated.(Model)
+	if got.busy || !got.commitSearch.Active || got.commitSearch.Summary != msg.summary {
+		t.Fatalf("busy=%v active=%v summary=%q", got.busy, got.commitSearch.Active, got.commitSearch.Summary)
+	}
+	if len(got.commits) != 1 || got.commits[0].Hash != "abcdef123456" {
+		t.Fatalf("commits = %#v", got.commits)
+	}
+	if cmd == nil {
+		t.Fatal("focused commit results should reload commit preview")
+	}
+	if loaded := cmd().(diffLoadedMsg); loaded.seq != got.reqSeq {
+		t.Fatalf("preview seq = %d, want %d", loaded.seq, got.reqSeq)
+	}
+}
+
+func TestUpdate_CommitSearchEscCancelsEditing(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitSearch
+	m.commitQuery.SetValue("fix")
+	m.commitQuery.Focus()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if got.mode != ModeNormal || got.commitSearch.Active {
+		t.Fatalf("mode=%v active=%v, want normal inactive", got.mode, got.commitSearch.Active)
+	}
+	if !strings.Contains(got.commitQuery.Value(), "fix") {
+		t.Fatalf("cancel editing should keep draft query, got %q", got.commitQuery.Value())
+	}
+	if cmd != nil {
+		t.Fatal("cancel editing should not dispatch")
+	}
+}
+
+func TestUpdate_EscClearsActiveCommitSearch(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.commitSearch.Active = true
+	m.commitSearch.Summary = `Search: "fix" | branch main`
+	m.commitQuery.SetValue("fix")
+	m.cursor[PanelCommits] = 4
+	m.scroll[PanelCommits] = 2
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if got.commitSearch.Active || got.commitSearch.Summary != "" || !got.busy {
+		t.Fatalf("active=%v summary=%q busy=%v", got.commitSearch.Active, got.commitSearch.Summary, got.busy)
+	}
+	if got.commitQuery.Value() != "" {
+		t.Fatalf("query = %q, want cleared", got.commitQuery.Value())
+	}
+	if got.cursor[PanelCommits] != 0 || got.scroll[PanelCommits] != 0 {
+		t.Fatalf("cursor=%d scroll=%d, want reset to top", got.cursor[PanelCommits], got.scroll[PanelCommits])
+	}
+	if cmd == nil {
+		t.Fatal("clearing search should reload normal commits")
+	}
+	if _, ok := cmd().(commitsLoadedMsg); !ok {
+		t.Fatalf("expected normal commitsLoadedMsg, got %T", cmd())
+	}
+}
+
+func TestUpdate_CommitsLoadedReloadsPreviewWhenFocusedOnCommits(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelCommits
+	m.cursor[PanelCommits] = 3 // stale cursor left over from a prior search result
+	msg := commitsLoadedMsg{commits: []git.Commit{{Hash: "abcdef123456", Subject: "newest"}}}
+
+	updated, cmd := m.Update(msg)
+	got := updated.(Model)
+	if got.commitSearch.Active {
+		t.Fatal("a normal commit load should clear active search")
+	}
+	if got.cursor[PanelCommits] != 0 {
+		t.Fatalf("cursor = %d, want clamped to 0 for a single-commit list", got.cursor[PanelCommits])
+	}
+	if cmd == nil {
+		t.Fatal("a focused commit load should reload the commit preview")
+	}
+	if loaded, ok := cmd().(diffLoadedMsg); !ok || loaded.seq != got.reqSeq {
+		t.Fatalf("expected diffLoadedMsg with seq %d, got %#v", got.reqSeq, cmd())
+	}
+}
+
+func TestUpdate_CommitSearchQueryFieldTypesNavKeys(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeCommitSearch
+	m.commitSearch.Field = searchFieldQuery
+	m.commitQuery.Focus()
+
+	// on the Query field, nav keys are text input, not selector navigation:
+	// the rune lands in the box rather than moving the branch/author cursor.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	got := updated.(Model)
+	if got.commitQuery.Value() != "j" {
+		t.Fatalf("query = %q, want \"j\" typed into the box", got.commitQuery.Value())
+	}
+	if got.commitSearch.BranchCursor != 0 || got.commitSearch.AuthorCursor != 0 {
+		t.Fatalf("selector moved while typing in query field: branch=%d author=%d",
+			got.commitSearch.BranchCursor, got.commitSearch.AuthorCursor)
+	}
+}
+
+func TestUpdate_ZeroResultSearchClearsStalePreview(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 80, 24
+	m.layout()
+	m.focus = PanelCommits
+	m.commits = []git.Commit{{Hash: "abcdef123456", Subject: "old commit"}}
+	m.viewport.SetContent("STALE DIFF from old commit")
+
+	updated, _ := m.Update(commitSearchLoadedMsg{commits: nil, summary: `Search: "nomatch" | branch main`})
+	got := updated.(Model)
+	if len(got.commits) != 0 {
+		t.Fatalf("commits = %#v, want empty", got.commits)
+	}
+	if strings.Contains(got.mainContent(), "STALE DIFF") {
+		t.Fatalf("zero-result search should clear the stale preview:\n%s", got.mainContent())
+	}
+	if !strings.Contains(got.mainContent(), "No commit detail to show.") {
+		t.Fatalf("zero-result search main pane should show the empty copy:\n%s", got.mainContent())
+	}
+}

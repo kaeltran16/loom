@@ -31,6 +31,7 @@ const (
 	ModeCommitting
 	ModeConfirming
 	ModeStashing
+	ModeCommitSearch
 )
 
 // commitField is which editor field has focus in ModeCommitting.
@@ -40,6 +41,24 @@ const (
 	fieldSubject commitField = iota
 	fieldBody
 )
+
+type commitSearchField int
+
+const (
+	searchFieldQuery commitSearchField = iota
+	searchFieldBranch
+	searchFieldAuthor
+)
+
+type commitSearchState struct {
+	Branch       string
+	Author       string
+	Field        commitSearchField
+	Active       bool
+	Summary      string
+	BranchCursor int
+	AuthorCursor int
+}
 
 // cmdEntry is one git command we ran, with when it completed and any output
 // it produced (remote ops carry git's combined stdout+stderr; fast mutations
@@ -68,6 +87,9 @@ type Model struct {
 	subject      textinput.Model
 	body         textarea.Model
 	stashMessage textinput.Model
+	commitQuery  textinput.Model
+	commitSearch commitSearchState
+	authors      []string
 	commitField  commitField
 	notice       string // transient success line; cleared on the next key
 	amending     bool   // the current ModeCommitting session is a git commit --amend
@@ -102,6 +124,8 @@ func NewModel(ctx context.Context, repo *git.Repo) Model {
 	body.Placeholder = "Body (optional)…"
 	stashMsg := textinput.New()
 	stashMsg.Placeholder = "Stash message..."
+	query := textinput.New()
+	query.Placeholder = "Search commit messages..."
 	return Model{
 		ctx:          ctx,
 		repo:         repo,
@@ -112,6 +136,9 @@ func NewModel(ctx context.Context, repo *git.Repo) Model {
 		subject:      subj,
 		body:         body,
 		stashMessage: stashMsg,
+		commitQuery:  query,
+		commitSearch: commitSearchState{Author: "Any"},
+		authors:      nil,
 		spinner:      sp,
 		mode:         ModeNormal,
 	}

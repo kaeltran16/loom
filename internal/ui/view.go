@@ -82,6 +82,12 @@ func (m Model) View() string {
 		if vm.stashMessage.Width < 1 {
 			vm.stashMessage.Width = 1
 		}
+	} else if vm.mode == ModeCommitSearch {
+		vm.viewport.Width = mainInnerW
+		vm.commitQuery.Width = mainInnerW - 2
+		if vm.commitQuery.Width < 1 {
+			vm.commitQuery.Width = 1
+		}
 	} else {
 		vm.viewport.Width = mainInnerW
 		vm.viewport.Height = mainInnerH - mainHeaderHeight
@@ -113,6 +119,7 @@ func (m Model) helpOverlay() string {
 		"s               save stash from Stashes",
 		"a / o / d       apply / pop / drop selected stash",
 		"enter           switch branch",
+		"/               commit search (from Commits)",
 		"c               commit (Ctrl-D send, Esc cancel)",
 		"C               amend last commit (edit message, Ctrl-D send, Esc cancel)",
 		"f / p / P       fetch / pull / push",
@@ -150,6 +157,9 @@ func (m Model) topBar() string {
 	}
 	if banner := m.mergeBanner(); banner != "" {
 		parts = append(parts, warnStyle.Render(banner))
+	}
+	if m.commitSearch.Active && m.commitSearch.Summary != "" {
+		parts = append(parts, accentStyle.Render(m.commitSearch.Summary))
 	}
 	return strings.Join(parts, mutedStyle.Render(" | "))
 }
@@ -277,7 +287,7 @@ func (m Model) selectedContextLines() []string {
 		if meta := commitMeta(c.Author, c.RelTime); meta != "" {
 			lines = append(lines, meta)
 		}
-		return append(lines, "actions: commit, fetch, pull, push")
+		return append(lines, "actions: / search, c commit, fetch, pull, push")
 	case PanelStashes:
 		s, ok := m.selectedStash()
 		if !ok {
@@ -411,6 +421,10 @@ func (m Model) statusRailContent() string {
 		sections = append(sections, selected...)
 	}
 
+	if m.commitSearch.Active && m.commitSearch.Summary != "" {
+		sections = append(sections, "", accentStyle.Render("Commit Search"), m.commitSearch.Summary)
+	}
+
 	return strings.Join(sections, "\n")
 }
 
@@ -433,6 +447,9 @@ func (m Model) mainContent() string {
 	}
 	if m.mode == ModeStashing {
 		return m.stashEditorView()
+	}
+	if m.mode == ModeCommitSearch {
+		return m.commitSearchEditorView()
 	}
 
 	title := m.mainTitle()
@@ -551,6 +568,65 @@ func (m Model) stashEditorView() string {
 		"",
 		mutedStyle.Render("Ctrl-D save · Esc cancel"),
 	}, "\n")
+}
+
+func (m Model) commitSearchEditorView() string {
+	vm := m
+	width := vm.viewport.Width
+	if width < 1 {
+		width = vm.w
+	}
+	vm.commitQuery.Width = width - 2
+	if vm.commitQuery.Width < 1 {
+		vm.commitQuery.Width = 1
+	}
+
+	queryLabel := mutedStyle.Render("Query")
+	branchLabel := mutedStyle.Render("Branch")
+	authorLabel := mutedStyle.Render("Author")
+	switch vm.commitSearch.Field {
+	case searchFieldQuery:
+		queryLabel = accentStyle.Render("Query")
+	case searchFieldBranch:
+		branchLabel = accentStyle.Render("Branch")
+	case searchFieldAuthor:
+		authorLabel = accentStyle.Render("Author")
+	}
+
+	branch := vm.commitSearch.Branch
+	if branch == "" {
+		branch = vm.branchChoices()[0]
+	}
+	author := vm.commitSearch.Author
+	if author == "" {
+		author = authorAny
+	}
+
+	return strings.Join([]string{
+		strongStyle.Render("Commit Search"),
+		mutedStyle.Render("Search commit messages on a branch, optionally filtered by author"),
+		"",
+		queryLabel,
+		vm.commitQuery.View(),
+		"",
+		branchLabel,
+		selectorLine(branch, vm.commitSearch.Field == searchFieldBranch),
+		"",
+		authorLabel,
+		selectorLine(author, vm.commitSearch.Field == searchFieldAuthor),
+		"",
+		mutedStyle.Render("Enter search · Tab switch · j/k choose · Esc cancel"),
+	}, "\n")
+}
+
+func selectorLine(value string, focused bool) string {
+	if value == "" {
+		value = "-"
+	}
+	if focused {
+		return cursorStyle.Render("  " + value + "  ")
+	}
+	return "  " + value
 }
 
 // amendScopeHint tells the user what `C` will fold into HEAD: staged changes
@@ -689,6 +765,8 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 		return label, []keyHint{{"ctrl+d", "submit"}, {"tab", "switch"}, {"esc", "cancel"}}
 	case ModeStashing:
 		return "Stash", []keyHint{{"ctrl+d", "save"}, {"esc", "cancel"}}
+	case ModeCommitSearch:
+		return "Search", []keyHint{{"enter", "apply"}, {"tab", "switch"}, {"j/k", "choose"}, {"esc", "cancel"}}
 	}
 	if m.mainFocused {
 		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}
@@ -702,7 +780,7 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 	case PanelBranches:
 		return "Branches", []keyHint{{"enter", "switch"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
 	case PanelCommits:
-		return "Commits", []keyHint{{"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
+		return "Commits", []keyHint{{"/", "search"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
 	case PanelStashes:
 		return "Stashes", []keyHint{{"s", "save"}, {"a", "apply"}, {"o", "pop"}, {"d", "drop"}, {"?", "help"}, {"q", "quit"}}
 	default:

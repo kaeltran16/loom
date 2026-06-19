@@ -185,7 +185,11 @@ func (m Model) panelRows(p Panel) []panelRow {
 		return rows
 	case PanelCommits:
 		if len(m.commits) == 0 {
-			return []panelRow{{text: emptyPanelLine(p), kind: panelRowEmpty, itemIndex: -1}}
+			text := emptyPanelLine(p)
+			if m.commitSearch.Active {
+				text = "No commits match search"
+			}
+			return []panelRow{{text: text, kind: panelRowEmpty, itemIndex: -1}}
 		}
 		rows := make([]panelRow, len(m.commits))
 		for i, c := range m.commits {
