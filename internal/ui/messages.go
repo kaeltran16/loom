@@ -9,9 +9,14 @@ type statusLoadedMsg struct {
 }
 type branchesLoadedMsg struct{ branches []git.Branch }
 type commitsLoadedMsg struct{ commits []git.Commit }
+type stashesLoadedMsg struct{ stashes []git.Stash }
 type diffLoadedMsg struct {
 	text string
 	seq  int // request token; the handler drops responses whose seq is stale
+}
+type stashShowLoadedMsg struct {
+	text string
+	seq  int
 }
 type gitDoneMsg struct {
 	cmd      string

@@ -43,6 +43,16 @@ func loadCommits(ctx context.Context, repo *git.Repo) tea.Cmd {
 	}
 }
 
+func loadStashes(ctx context.Context, repo *git.Repo) tea.Cmd {
+	return func() tea.Msg {
+		ss, err := repo.Stashes(ctx)
+		if err != nil {
+			return errMsg{err}
+		}
+		return stashesLoadedMsg{stashes: ss}
+	}
+}
+
 func loadDiff(ctx context.Context, repo *git.Repo, path string, staged bool, seq int) tea.Cmd {
 	return func() tea.Msg {
 		text, err := repo.Diff(ctx, path, staged)
@@ -50,6 +60,16 @@ func loadDiff(ctx context.Context, repo *git.Repo, path string, staged bool, seq
 			return errMsg{err}
 		}
 		return diffLoadedMsg{text: text, seq: seq}
+	}
+}
+
+func loadStashShow(ctx context.Context, repo *git.Repo, ref string, seq int) tea.Cmd {
+	return func() tea.Msg {
+		text, err := repo.StashShow(ctx, ref)
+		if err != nil {
+			return errMsg{err}
+		}
+		return stashShowLoadedMsg{text: text, seq: seq}
 	}
 }
 
@@ -103,6 +123,28 @@ func switchBranch(ctx context.Context, repo *git.Repo, name string) tea.Cmd {
 }
 func mergeAbort(ctx context.Context, repo *git.Repo) tea.Cmd {
 	return mutation("git merge --abort", func() error { return repo.MergeAbort(ctx) })
+}
+
+func stashPush(ctx context.Context, repo *git.Repo, message string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := repo.StashPush(ctx, message)
+		if err != nil {
+			return gitDoneMsg{cmd: "git stash push", output: out, err: err}
+		}
+		return gitDoneMsg{cmd: "git stash push", output: out, notice: "Stashed " + strings.TrimSpace(message)}
+	}
+}
+
+func stashApply(ctx context.Context, repo *git.Repo, ref string) tea.Cmd {
+	return stashMutation("git stash apply "+ref, func() (string, error) { return repo.StashApply(ctx, ref) })
+}
+
+func stashPop(ctx context.Context, repo *git.Repo, ref string) tea.Cmd {
+	return stashMutation("git stash pop "+ref, func() (string, error) { return repo.StashPop(ctx, ref) })
+}
+
+func stashDrop(ctx context.Context, repo *git.Repo, ref string) tea.Cmd {
+	return stashMutation("git stash drop "+ref, func() (string, error) { return repo.StashDrop(ctx, ref) })
 }
 
 // openEditor suspends the TUI and opens the conflicted file in the user's editor
@@ -180,6 +222,14 @@ func push(ctx context.Context, repo *git.Repo) tea.Cmd {
 func mutation(label string, fn func() error) tea.Cmd {
 	return func() tea.Msg { return gitDoneMsg{cmd: label, err: fn()} }
 }
+
+func stashMutation(label string, fn func() (string, error)) tea.Cmd {
+	return func() tea.Msg {
+		out, err := fn()
+		return gitDoneMsg{cmd: label, output: out, err: err}
+	}
+}
+
 func remoteOp(ctx context.Context, label string, fn func() (string, error)) tea.Cmd {
 	return func() tea.Msg {
 		out, err := fn()

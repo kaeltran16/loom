@@ -42,6 +42,57 @@ func TestUpdate_TabCyclesFocus(t *testing.T) {
 	}
 }
 
+func TestUpdate_TabCyclesThroughStashes(t *testing.T) {
+	m := newTestModel()
+	for _, want := range []Panel{PanelBranches, PanelCommits, PanelStashes, PanelFiles} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(Model)
+		if m.focus != want {
+			t.Fatalf("focus = %v, want %v", m.focus, want)
+		}
+	}
+}
+
+func TestUpdate_FourFocusesStashes(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")})
+	if updated.(Model).focus != PanelStashes {
+		t.Fatalf("focus = %v, want PanelStashes", updated.(Model).focus)
+	}
+}
+
+func TestUpdate_StashesLoadedPopulatesModel(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(stashesLoadedMsg{stashes: []git.Stash{{Ref: "stash@{0}", Message: "On main: save"}}})
+	got := updated.(Model)
+	if len(got.stashes) != 1 || got.stashes[0].Ref != "stash@{0}" {
+		t.Fatalf("stashes = %#v", got.stashes)
+	}
+}
+
+func TestUpdate_StashesLoadedRefreshesFocusedPreviewAndClampsCursor(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+	m.cursor[PanelStashes] = 1
+	m.stashes = []git.Stash{
+		{Ref: "stash@{0}", Message: "new"},
+		{Ref: "stash@{1}", Message: "old"},
+	}
+
+	updated, cmd := m.Update(stashesLoadedMsg{stashes: []git.Stash{{Ref: "stash@{0}", Message: "new"}}})
+	got := updated.(Model)
+
+	if got.cursor[PanelStashes] != 0 {
+		t.Fatalf("cursor = %d, want clamped to 0", got.cursor[PanelStashes])
+	}
+	if cmd == nil {
+		t.Fatal("expected focused stash list refresh to reload the preview")
+	}
+	if msg, ok := cmd().(stashShowLoadedMsg); !ok || msg.seq != got.reqSeq {
+		t.Fatalf("expected current stashShowLoadedMsg, got %#v", cmd())
+	}
+}
+
 func TestUpdate_JMovesCursorDown(t *testing.T) {
 	m := newTestModel()
 	m.files = []git.FileStatus{{Path: "a"}, {Path: "b"}}
@@ -765,5 +816,184 @@ func TestUpdate_EditorDoneErrorSurfaces(t *testing.T) {
 	updated, _ := m.Update(editorDoneMsg{err: errFake("boom")})
 	if updated.(Model).err == nil {
 		t.Error("expected err set on editor failure")
+	}
+}
+
+func TestUpdate_SInStashesEntersStashingMode(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	got := updated.(Model)
+
+	if got.mode != ModeStashing {
+		t.Fatalf("mode = %v, want ModeStashing", got.mode)
+	}
+	if cmd != nil {
+		t.Fatal("opening stash message mode should not dispatch a command")
+	}
+}
+
+func TestUpdate_SInFilesWithChangesEntersStashingMode(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+	m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	got := updated.(Model)
+
+	if got.mode != ModeStashing {
+		t.Fatalf("mode = %v, want ModeStashing", got.mode)
+	}
+	if cmd != nil {
+		t.Fatal("opening stash message mode should not dispatch a command")
+	}
+}
+
+func TestUpdate_SInCleanFilesIsNoop(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelFiles
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	got := updated.(Model)
+
+	if got.mode != ModeNormal {
+		t.Fatalf("mode = %v, want ModeNormal", got.mode)
+	}
+	if cmd != nil {
+		t.Fatal("clean Files stash shortcut should not dispatch")
+	}
+}
+
+func TestUpdate_StashCtrlDDispatchesPush(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeStashing
+	m.stashMessage.SetValue("save point")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	got := updated.(Model)
+
+	if got.mode != ModeNormal {
+		t.Fatalf("mode = %v, want ModeNormal", got.mode)
+	}
+	if !got.busy {
+		t.Fatal("expected busy=true after stash submit")
+	}
+	if cmd == nil {
+		t.Fatal("expected stash push command")
+	}
+	done := cmd().(gitDoneMsg)
+	if done.cmd != "git stash push" {
+		t.Fatalf("cmd = %q", done.cmd)
+	}
+}
+
+func TestUpdate_StashEmptyMessageIsNoop(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeStashing
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+
+	if updated.(Model).mode != ModeStashing {
+		t.Fatal("empty stash message should stay in stash editor")
+	}
+	if cmd != nil {
+		t.Fatal("empty stash message should not dispatch")
+	}
+}
+
+func TestUpdate_StashEscCancels(t *testing.T) {
+	m := newTestModel()
+	m.mode = ModeStashing
+	m.stashMessage.SetValue("save point")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+
+	if got.mode != ModeNormal {
+		t.Fatalf("mode = %v, want ModeNormal", got.mode)
+	}
+	if got.stashMessage.Value() != "" {
+		t.Fatalf("stash message = %q, want reset", got.stashMessage.Value())
+	}
+	if cmd != nil {
+		t.Fatal("cancel should not dispatch")
+	}
+}
+
+func TestUpdate_AAppliesSelectedStash(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save"}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+
+	if !updated.(Model).busy {
+		t.Fatal("expected busy=true on apply")
+	}
+	if cmd == nil {
+		t.Fatal("expected apply command")
+	}
+	if done := cmd().(gitDoneMsg); done.cmd != "git stash apply stash@{0}" {
+		t.Fatalf("cmd = %q", done.cmd)
+	}
+}
+
+func TestUpdate_OPopsSelectedStash(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save"}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+
+	if !updated.(Model).busy {
+		t.Fatal("expected busy=true on pop")
+	}
+	if cmd == nil {
+		t.Fatal("expected pop command")
+	}
+	if done := cmd().(gitDoneMsg); done.cmd != "git stash pop stash@{0}" {
+		t.Fatalf("cmd = %q", done.cmd)
+	}
+}
+
+func TestUpdate_DInStashesConfirmsDrop(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save"}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got := updated.(Model)
+
+	if got.mode != ModeConfirming {
+		t.Fatalf("mode = %v, want ModeConfirming", got.mode)
+	}
+	if got.confirm.action == nil {
+		t.Fatal("expected drop action stored for confirmation")
+	}
+	if cmd != nil {
+		t.Fatal("drop should not dispatch before confirmation")
+	}
+}
+
+func TestUpdate_StashActionIgnoredOutsideStashes(t *testing.T) {
+	for _, key := range []string{"a", "o"} {
+		m := newTestModel()
+		m.focus = PanelFiles
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		if updated.(Model).busy || cmd != nil {
+			t.Fatalf("key %q outside Stashes should be ignored", key)
+		}
+	}
+}
+
+func TestUpdate_StashActionWithNoSelectionIsNoop(t *testing.T) {
+	for _, key := range []string{"a", "o", "d"} {
+		m := newTestModel()
+		m.focus = PanelStashes
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		if updated.(Model).busy || updated.(Model).mode != ModeNormal || cmd != nil {
+			t.Fatalf("key %q with no stash should be ignored", key)
+		}
 	}
 }

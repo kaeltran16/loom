@@ -151,6 +151,38 @@ func (r *Repo) HeadMessage(ctx context.Context) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+func (r *Repo) Stashes(ctx context.Context) ([]Stash, error) {
+	out, errb, err := r.runner.Run(ctx, nil, "stash", "list", "--format=%gd%x00%gs%x00%cr")
+	if err != nil {
+		return nil, fmt.Errorf("git stash list: %w: %s", err, strings.TrimSpace(string(errb)))
+	}
+	return parseStashes(out), nil
+}
+
+func (r *Repo) StashShow(ctx context.Context, ref string) (string, error) {
+	out, errb, err := r.runner.Run(ctx, nil, "stash", "show", "--patch", "--stat", ref)
+	if err != nil {
+		return "", fmt.Errorf("git stash show: %w: %s", err, strings.TrimSpace(string(errb)))
+	}
+	return string(out), nil
+}
+
+func (r *Repo) StashPush(ctx context.Context, message string) (string, error) {
+	return r.stashOutput(ctx, "push", "-u", "-m", message)
+}
+
+func (r *Repo) StashApply(ctx context.Context, ref string) (string, error) {
+	return r.stashOutput(ctx, "apply", ref)
+}
+
+func (r *Repo) StashPop(ctx context.Context, ref string) (string, error) {
+	return r.stashOutput(ctx, "pop", ref)
+}
+
+func (r *Repo) StashDrop(ctx context.Context, ref string) (string, error) {
+	return r.stashOutput(ctx, "drop", ref)
+}
+
 func (r *Repo) Fetch(ctx context.Context) (string, error) { return r.remote(ctx, "fetch") }
 func (r *Repo) Pull(ctx context.Context) (string, error)  { return r.remote(ctx, "pull") }
 func (r *Repo) Push(ctx context.Context) (string, error)  { return r.remote(ctx, "push") }
@@ -170,6 +202,15 @@ func (r *Repo) remote(ctx context.Context, sub string) (string, error) {
 	combined := strings.TrimSpace(string(out) + "\n" + string(errb))
 	if err != nil {
 		return combined, fmt.Errorf("git %s: %w", sub, err)
+	}
+	return combined, nil
+}
+
+func (r *Repo) stashOutput(ctx context.Context, args ...string) (string, error) {
+	out, errb, err := r.runner.Run(ctx, nil, append([]string{"stash"}, args...)...)
+	combined := strings.TrimSpace(string(out) + "\n" + string(errb))
+	if err != nil {
+		return combined, fmt.Errorf("git stash %s: %w", args[0], err)
 	}
 	return combined, nil
 }

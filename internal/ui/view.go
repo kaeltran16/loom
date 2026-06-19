@@ -76,6 +76,12 @@ func (m Model) View() string {
 		}
 		vm.body.SetWidth(mainInnerW)
 		vm.body.SetHeight(editorBodyH)
+	} else if vm.mode == ModeStashing {
+		vm.viewport.Width = mainInnerW
+		vm.stashMessage.Width = mainInnerW - 2
+		if vm.stashMessage.Width < 1 {
+			vm.stashMessage.Width = 1
+		}
 	} else {
 		vm.viewport.Width = mainInnerW
 		vm.viewport.Height = mainInnerH - mainHeaderHeight
@@ -98,12 +104,14 @@ func (m Model) helpOverlay() string {
 	help := strings.Join([]string{
 		"loom — keys",
 		"",
-		"1/2/3 or Tab   focus Files / Branches / Commits",
+		"1/2/3/4 or Tab focus Files / Branches / Commits / Stashes",
 		"j/k or ↑/↓      move cursor (scroll the diff when in it)",
 		"g / G           diff: jump to top / bottom",
 		"l / h           enter diff pane / back to list",
 		"space           stage / unstage file",
 		"d               discard (confirm y)",
+		"s               save stash from Stashes",
+		"a / o / d       apply / pop / drop selected stash",
 		"enter           switch branch",
 		"c               commit (Ctrl-D send, Esc cancel)",
 		"C               amend last commit (edit message, Ctrl-D send, Esc cancel)",
@@ -186,6 +194,7 @@ func (m Model) workflowTabs() string {
 		m.workflowTab(PanelFiles, "1", "Files", len(m.files)),
 		m.workflowTab(PanelBranches, "2", "Branches", len(m.branches)),
 		m.workflowTab(PanelCommits, "3", "Commits", len(m.commits)),
+		m.workflowTab(PanelStashes, "4", "Stashes", len(m.stashes)),
 	}
 	return strings.Join(tabs, " ")
 }
@@ -269,6 +278,16 @@ func (m Model) selectedContextLines() []string {
 			lines = append(lines, meta)
 		}
 		return append(lines, "actions: commit, fetch, pull, push")
+	case PanelStashes:
+		s, ok := m.selectedStash()
+		if !ok {
+			return []string{"No stash selected"}
+		}
+		lines := []string{s.Ref, s.Message}
+		if meta := stashMeta(s); meta != "" {
+			lines = append(lines, meta)
+		}
+		return append(lines, "actions: s save, a apply, o pop, d drop")
 	default:
 		return nil
 	}
@@ -280,6 +299,14 @@ func (m Model) selectedFile() (git.FileStatus, bool) {
 		return git.FileStatus{}, false
 	}
 	return m.files[i], true
+}
+
+func (m Model) selectedStash() (git.Stash, bool) {
+	i := m.cursor[PanelStashes]
+	if i < 0 || i >= len(m.stashes) {
+		return git.Stash{}, false
+	}
+	return m.stashes[i], true
 }
 
 func fileReviewState(f git.FileStatus) string {
@@ -307,11 +334,11 @@ func (m Model) selectedFileActionLine(f git.FileStatus) string {
 	case f.Unmerged:
 		return "actions: e edit, space resolve, A abort, c commit"
 	case f.Untracked:
-		return "actions: space stage, d discard"
+		return "actions: space stage, d discard, s stash"
 	case f.IsStaged():
-		return "actions: space unstage, c commit staged"
+		return "actions: space unstage, s stash, c commit staged"
 	default:
-		return "actions: space stage, d discard, c " + m.commitHint()
+		return "actions: space stage, d discard, s stash, c " + m.commitHint()
 	}
 }
 
@@ -320,11 +347,11 @@ func (m Model) selectedFileFooterHints(f git.FileStatus) []keyHint {
 	case f.Unmerged:
 		return []keyHint{{"e", "edit"}, {"space", "resolve"}, {"A", "abort"}, {"c", "commit"}, {"?", "help"}, {"q", "quit"}}
 	case f.Untracked:
-		return []keyHint{{"space", "stage"}, {"d", "discard"}, {"?", "help"}, {"q", "quit"}}
+		return []keyHint{{"space", "stage"}, {"d", "discard"}, {"s", "stash"}, {"?", "help"}, {"q", "quit"}}
 	case f.IsStaged():
-		return []keyHint{{"space", "unstage"}, {"c", "commit staged"}, {"?", "help"}, {"q", "quit"}}
+		return []keyHint{{"space", "unstage"}, {"s", "stash"}, {"c", "commit staged"}, {"?", "help"}, {"q", "quit"}}
 	default:
-		return []keyHint{{"space", "stage"}, {"d", "discard"}, {"c", m.commitHint()}, {"?", "help"}, {"q", "quit"}}
+		return []keyHint{{"space", "stage"}, {"d", "discard"}, {"s", "stash"}, {"c", m.commitHint()}, {"?", "help"}, {"q", "quit"}}
 	}
 }
 
@@ -340,6 +367,17 @@ func commitMeta(author, relTime string) string {
 	}
 }
 
+func stashMeta(s git.Stash) string {
+	switch {
+	case s.Branch != "" && s.Age != "":
+		return s.Branch + " · " + s.Age
+	case s.Branch != "":
+		return s.Branch
+	default:
+		return s.Age
+	}
+}
+
 func (m Model) statusRailContent() string {
 	stateText, stateStyle := m.commandState()
 	sections := []string{
@@ -349,6 +387,7 @@ func (m Model) statusRailContent() string {
 		fmt.Sprintf("Files: %d changed", len(m.files)),
 		fmt.Sprintf("Branches: %d local", len(m.branches)),
 		fmt.Sprintf("Commits: %d loaded", len(m.commits)),
+		fmt.Sprintf("Stashes: %d saved", len(m.stashes)),
 		"",
 		accentStyle.Render("Command"),
 		stateStyle.Render(stateText),
@@ -392,6 +431,9 @@ func (m Model) mainContent() string {
 	if m.mode == ModeCommitting {
 		return m.commitEditorView()
 	}
+	if m.mode == ModeStashing {
+		return m.stashEditorView()
+	}
 
 	title := m.mainTitle()
 	if status := m.scrollStatus(); status != "" {
@@ -404,6 +446,8 @@ func (m Model) mainContent() string {
 	body := m.viewport.View()
 	if m.mainLoading && m.focus == PanelFiles {
 		body = "Loading diff..."
+	} else if m.mainLoading && m.focus == PanelStashes {
+		body = "Loading stash preview..."
 	} else if strings.TrimSpace(body) == "" {
 		body = m.emptyMainBody()
 	}
@@ -487,6 +531,28 @@ func (m Model) commitEditorView() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) stashEditorView() string {
+	label := accentStyle.Render("Message")
+	width := m.viewport.Width
+	if width < 1 {
+		width = m.w
+	}
+	vm := m
+	vm.stashMessage.Width = width - 2
+	if vm.stashMessage.Width < 1 {
+		vm.stashMessage.Width = 1
+	}
+	return strings.Join([]string{
+		strongStyle.Render("Save stash"),
+		mutedStyle.Render("Save current tracked and untracked work"),
+		"",
+		label,
+		vm.stashMessage.View(),
+		"",
+		mutedStyle.Render("Ctrl-D save · Esc cancel"),
+	}, "\n")
+}
+
 // amendScopeHint tells the user what `C` will fold into HEAD: staged changes
 // plus the edited message, or just the message when nothing is staged.
 func (m Model) amendScopeHint() string {
@@ -538,6 +604,13 @@ func (m Model) mainTitle() string {
 			hash = hash[:7]
 		}
 		return "Commit: " + hash
+	case PanelStashes:
+		s, ok := m.selectedStash()
+		if !ok {
+			return "No stashes"
+		}
+		pos, total := m.selectedStashPosition()
+		return fmt.Sprintf("%s | %s | %d of %d", s.Ref, s.Message, pos, total)
 	default:
 		return ""
 	}
@@ -570,6 +643,20 @@ func (m Model) selectedFilePosition() (int, int) {
 	return i + 1, len(m.files)
 }
 
+func (m Model) selectedStashPosition() (int, int) {
+	if len(m.stashes) == 0 {
+		return 0, 0
+	}
+	i := m.cursor[PanelStashes]
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(m.stashes) {
+		i = len(m.stashes) - 1
+	}
+	return i + 1, len(m.stashes)
+}
+
 func (m Model) emptyMainBody() string {
 	switch m.focus {
 	case PanelFiles:
@@ -578,6 +665,8 @@ func (m Model) emptyMainBody() string {
 		return "No branch log to show."
 	case PanelCommits:
 		return "No commit detail to show."
+	case PanelStashes:
+		return "No stash preview to show."
 	default:
 		return ""
 	}
@@ -598,6 +687,8 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 			label = "Amend"
 		}
 		return label, []keyHint{{"ctrl+d", "submit"}, {"tab", "switch"}, {"esc", "cancel"}}
+	case ModeStashing:
+		return "Stash", []keyHint{{"ctrl+d", "save"}, {"esc", "cancel"}}
 	}
 	if m.mainFocused {
 		return "Diff", []keyHint{{"j/k", "scroll"}, {"g/G", "top/bot"}, {"h", "back"}, {"?", "help"}, {"q", "quit"}}
@@ -612,6 +703,8 @@ func (m Model) footerHints() (label string, hints []keyHint) {
 		return "Branches", []keyHint{{"enter", "switch"}, {"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
 	case PanelCommits:
 		return "Commits", []keyHint{{"c", "commit"}, {"f", "fetch"}, {"p", "pull"}, {"P", "push"}, {"?", "help"}, {"q", "quit"}}
+	case PanelStashes:
+		return "Stashes", []keyHint{{"s", "save"}, {"a", "apply"}, {"o", "pop"}, {"d", "drop"}, {"?", "help"}, {"q", "quit"}}
 	default:
 		return "", []keyHint{{"?", "help"}, {"q", "quit"}}
 	}

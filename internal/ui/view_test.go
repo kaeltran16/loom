@@ -43,6 +43,7 @@ func TestPanelLinesRenderRows(t *testing.T) {
 	m.files = []git.FileStatus{{Path: "internal/ui/view.go", Worktree: 'M'}}
 	m.branches = []git.Branch{{Name: "main", Current: true}}
 	m.commits = []git.Commit{{Hash: "37527eeabcd", Subject: "help overlay"}}
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: parser cleanup", Age: "12 minutes ago"}}
 
 	if got := strings.Join(m.panelLines(PanelFiles), "\n"); !strings.Contains(got, "M  internal/ui/view.go") {
 		t.Fatalf("files panel lines = %q", got)
@@ -52,6 +53,9 @@ func TestPanelLinesRenderRows(t *testing.T) {
 	}
 	if got := strings.Join(m.panelLines(PanelCommits), "\n"); !strings.Contains(got, "37527ee help overlay") {
 		t.Fatalf("commits panel lines = %q", got)
+	}
+	if got := strings.Join(m.panelLines(PanelStashes), "\n"); !strings.Contains(got, "stash@{0}") || !strings.Contains(got, "On main: parser cleanup") || !strings.Contains(got, "12 minutes ago") {
+		t.Fatalf("stashes panel lines = %q", got)
 	}
 }
 
@@ -268,7 +272,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "a.go", Worktree: 'M'}}
 			},
-			want: "Files: space stage · d discard · c commit all · ? help · q quit",
+			want: "Files: space stage · d discard · s stash · c commit all · ? help · q quit",
 		},
 		{
 			name: "files focus unstaged with staged changes elsewhere",
@@ -279,7 +283,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 					{Path: "b.go", Staged: 'M'},
 				}
 			},
-			want: "Files: space stage · d discard · c commit staged · ? help · q quit",
+			want: "Files: space stage · d discard · s stash · c commit staged · ? help · q quit",
 		},
 		{
 			name: "files focus staged",
@@ -287,7 +291,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "a.go", Staged: 'M'}}
 			},
-			want: "Files: space unstage · c commit staged · ? help · q quit",
+			want: "Files: space unstage · s stash · c commit staged · ? help · q quit",
 		},
 		{
 			name: "files focus untracked",
@@ -295,7 +299,7 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "a.go", Untracked: true}}
 			},
-			want: "Files: space stage · d discard · ? help · q quit",
+			want: "Files: space stage · d discard · s stash · ? help · q quit",
 		},
 		{
 			name: "branches focus",
@@ -312,6 +316,14 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 			want: "Commits: c commit · f fetch · p pull · P push · ? help · q quit",
 		},
 		{
+			name: "stashes focus",
+			setup: func(m *Model) {
+				m.focus = PanelStashes
+				m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save"}}
+			},
+			want: "Stashes: s save · a apply · o pop · d drop · ? help · q quit",
+		},
+		{
 			name: "confirming mode",
 			setup: func(m *Model) {
 				m.mode = ModeConfirming
@@ -324,6 +336,13 @@ func TestFooterActionsByFocusAndMode(t *testing.T) {
 				m.mode = ModeCommitting
 			},
 			want: "Commit: ctrl+d submit · tab switch · esc cancel",
+		},
+		{
+			name: "stashing mode",
+			setup: func(m *Model) {
+				m.mode = ModeStashing
+			},
+			want: "Stash: ctrl+d save · esc cancel",
 		},
 		{
 			name: "main pane focused",
@@ -411,8 +430,24 @@ func TestTopBarShowsBranchWorkflowCountsAndCommandState(t *testing.T) {
 		"[1 Files 2]",
 		"2 Branches 2",
 		"3 Commits 1",
+		"4 Stashes 0",
 		"Ready",
 	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("topBar missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestTopBarIncludesStashesWorkflow(t *testing.T) {
+	m := newTestModel()
+	m.branch = git.BranchInfo{Name: "main"}
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save point"}}
+	m.focus = PanelStashes
+
+	got := m.topBar()
+
+	for _, want := range []string{"1 Files 0", "2 Branches 0", "3 Commits 0", "[4 Stashes 1]"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("topBar missing %q: %q", want, got)
 		}
@@ -477,7 +512,7 @@ func TestSelectedContextLines(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "internal/ui/view.go", Worktree: 'M'}}
 			},
-			want: []string{"internal/ui/view.go", "unstaged file", "actions: space stage, d discard, c commit all"},
+			want: []string{"internal/ui/view.go", "unstaged file", "actions: space stage, d discard, s stash, c commit all"},
 		},
 		{
 			name: "staged file",
@@ -485,7 +520,7 @@ func TestSelectedContextLines(t *testing.T) {
 				m.focus = PanelFiles
 				m.files = []git.FileStatus{{Path: "README.md", Staged: 'A'}}
 			},
-			want: []string{"README.md", "staged file", "actions: space unstage, c commit staged"},
+			want: []string{"README.md", "staged file", "actions: space unstage, s stash, c commit staged"},
 		},
 		{
 			name: "branch",
@@ -528,17 +563,17 @@ func TestSelectedContextLinesShowConcreteFileActions(t *testing.T) {
 		{
 			name:  "unstaged",
 			files: []git.FileStatus{{Path: "a.go", Worktree: 'M'}},
-			want:  []string{"a.go", "unstaged file", "actions: space stage, d discard, c commit all"},
+			want:  []string{"a.go", "unstaged file", "actions: space stage, d discard, s stash, c commit all"},
 		},
 		{
 			name:  "staged",
 			files: []git.FileStatus{{Path: "a.go", Staged: 'M'}},
-			want:  []string{"a.go", "staged file", "actions: space unstage, c commit staged"},
+			want:  []string{"a.go", "staged file", "actions: space unstage, s stash, c commit staged"},
 		},
 		{
 			name:  "untracked",
 			files: []git.FileStatus{{Path: "a.go", Untracked: true}},
-			want:  []string{"a.go", "untracked file", "actions: space stage, d discard"},
+			want:  []string{"a.go", "untracked file", "actions: space stage, d discard, s stash"},
 		},
 		{
 			name:  "conflict",
@@ -571,6 +606,20 @@ func TestSelectedContextLinesShowsCommitMetadata(t *testing.T) {
 	for _, want := range []string{"abcdef1", "focus mode", "Kael", "2 hours ago"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("selectedContextLines missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSelectedContextLinesShowsStashActions(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save", Branch: "main", Age: "3 minutes ago"}}
+
+	got := strings.Join(m.selectedContextLines(), "\n")
+
+	for _, want := range []string{"stash@{0}", "On main: save", "main", "3 minutes ago", "actions: s save, a apply, o pop, d drop"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("selected context missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -648,6 +697,57 @@ func TestViewRendersFocusMode(t *testing.T) {
 	// Only the focused (Files) list renders in the body; the Commits list does not.
 	if strings.Contains(got, "37527ee help overlay") {
 		t.Fatalf("non-focused commit row leaked into Focus Mode body:\n%s", got)
+	}
+}
+
+func TestMainTitleForStashSelection(t *testing.T) {
+	m := newTestModel()
+	m.focus = PanelStashes
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save point", Age: "3 minutes ago"}}
+
+	if got := m.mainTitle(); got != "stash@{0} | On main: save point | 1 of 1" {
+		t.Fatalf("mainTitle = %q", got)
+	}
+}
+
+func TestStashEditorView(t *testing.T) {
+	m := newTestModel()
+	m.w, m.h = 120, 40
+	m.layout()
+	m.mode = ModeStashing
+	m.stashMessage.SetValue("save point")
+
+	got := m.View()
+
+	for _, want := range []string{"Save stash", "Message", "save point", "Ctrl-D save", "Esc cancel"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stash editor missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestViewStashesUsesNormalLayoutBounds(t *testing.T) {
+	m := newTestModel()
+	m.w = 120
+	m.h = 40
+	m.layout()
+	m.branch = git.BranchInfo{Name: "main"}
+	m.focus = PanelStashes
+	m.stashes = []git.Stash{{Ref: "stash@{0}", Message: "On main: save", Age: "3 minutes ago"}}
+	m.viewport.SetContent("diff --git a/a.go b/a.go\n+new\n")
+
+	got := m.View()
+
+	if height := lipgloss.Height(got); height > m.h {
+		t.Fatalf("View height = %d, want <= %d", height, m.h)
+	}
+	if width := lipgloss.Width(got); width > m.w {
+		t.Fatalf("View width = %d, want <= %d", width, m.w)
+	}
+	for _, want := range []string{"[4 Stashes 1]", "stash@{0}", "Status Rail", "apply"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("View missing %q:\n%s", want, got)
+		}
 	}
 }
 

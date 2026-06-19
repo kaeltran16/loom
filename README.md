@@ -25,10 +25,12 @@ loom is read-only until you act: nothing is staged, committed, or pushed without
 
 | Key | Action |
 |-----|--------|
-| `1` `2` `3` / `Tab` | focus Files / Branches / Commits |
+| `1` `2` `3` `4` / `Tab` | focus Files / Branches / Commits / Stashes |
 | `j` `k` / `↑` `↓` | move cursor |
 | `space` | stage / unstage the selected file |
 | `d` | discard changes (confirm with `y`) |
+| `s` | save current work as a stash from Files or Stashes |
+| `a` `o` `d` | apply / pop / drop selected stash |
 | `enter` | switch to the selected branch |
 | `c` | commit (type message, `Ctrl-D` to confirm, `Esc` to cancel) |
 | `C` | amend last commit (edit message, `Ctrl-D` to confirm) |

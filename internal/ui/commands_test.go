@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kael02/loom/internal/git"
 )
 
@@ -143,5 +144,77 @@ func TestEditorExecCmd_embedsEditorAndFile(t *testing.T) {
 	joined := strings.Join(c.Args, " ")
 	if !strings.Contains(joined, "code --wait") || !strings.Contains(joined, "a.go") {
 		t.Errorf("args = %v, want editor and file embedded", c.Args)
+	}
+}
+
+func TestLoadStashesCmd_returnsStashesLoadedMsg(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("stash@{0}\x00On main: save\x001 minute ago\n")})
+
+	msg := loadStashes(context.Background(), repo)()
+
+	got, ok := msg.(stashesLoadedMsg)
+	if !ok {
+		t.Fatalf("want stashesLoadedMsg, got %T", msg)
+	}
+	if len(got.stashes) != 1 || got.stashes[0].Ref != "stash@{0}" {
+		t.Fatalf("stashes = %#v", got.stashes)
+	}
+}
+
+func TestLoadStashShowCmd_returnsDiffLoadedMsg(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("diff --git a/a.go b/a.go\n+new\n")})
+
+	msg := loadStashShow(context.Background(), repo, "stash@{0}", 9)().(stashShowLoadedMsg)
+
+	if msg.seq != 9 {
+		t.Fatalf("seq = %d, want 9", msg.seq)
+	}
+	if !strings.Contains(msg.text, "diff --git") {
+		t.Fatalf("stash show text = %q", msg.text)
+	}
+}
+
+func TestStashPushCmd_keepsOutputAndNotice(t *testing.T) {
+	repo := git.NewTestRepo(&git.StubRunner{Stdout: []byte("Saved working directory and index state On main: save\n")})
+
+	msg := stashPush(context.Background(), repo, "save")().(gitDoneMsg)
+
+	if msg.cmd != "git stash push" {
+		t.Fatalf("cmd = %q", msg.cmd)
+	}
+	if msg.output == "" {
+		t.Fatal("expected stash output in command log")
+	}
+	if msg.notice != "Stashed save" {
+		t.Fatalf("notice = %q", msg.notice)
+	}
+	if msg.err != nil {
+		t.Fatalf("unexpected error: %v", msg.err)
+	}
+}
+
+func TestStashActionCommandsKeepOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  tea.Cmd
+		want string
+	}{
+		{"apply", stashApply(context.Background(), git.NewTestRepo(&git.StubRunner{Stdout: []byte("applied\n")}), "stash@{0}"), "git stash apply stash@{0}"},
+		{"pop", stashPop(context.Background(), git.NewTestRepo(&git.StubRunner{Stdout: []byte("popped\n")}), "stash@{0}"), "git stash pop stash@{0}"},
+		{"drop", stashDrop(context.Background(), git.NewTestRepo(&git.StubRunner{Stdout: []byte("dropped\n")}), "stash@{0}"), "git stash drop stash@{0}"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := c.cmd().(gitDoneMsg)
+			if msg.cmd != c.want {
+				t.Fatalf("cmd = %q, want %q", msg.cmd, c.want)
+			}
+			if msg.output == "" {
+				t.Fatal("expected output preserved")
+			}
+			if msg.err != nil {
+				t.Fatalf("unexpected error: %v", msg.err)
+			}
+		})
 	}
 }

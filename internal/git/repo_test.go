@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -208,5 +209,87 @@ func TestRepo_Merging_falseWhenRevParseFails(t *testing.T) {
 	}
 	if got {
 		t.Error("expected merging=false when rev-parse fails")
+	}
+}
+
+func TestRepo_Stashes_callsArgsAndParses(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("stash@{0}\x00On main: save point\x003 minutes ago\n")}
+	repo := &Repo{runner: fr}
+
+	got, err := repo.Stashes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{"stash", "list", "--format=%gd%x00%gs%x00%cr"}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+	if len(got) != 1 || got[0].Ref != "stash@{0}" || got[0].Message != "On main: save point" {
+		t.Errorf("stashes = %#v", got)
+	}
+}
+
+func TestRepo_StashShow_args(t *testing.T) {
+	fr := &fakeRunner{stdout: []byte("diff --git a/a.go b/a.go\n")}
+	got, err := (&Repo{runner: fr}).StashShow(context.Background(), "stash@{2}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{"stash", "show", "--patch", "--stat", "stash@{2}"}
+	if !reflect.DeepEqual(fr.gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", fr.gotArgs, wantArgs)
+	}
+	if got != "diff --git a/a.go b/a.go\n" {
+		t.Errorf("show = %q", got)
+	}
+}
+
+func TestRepo_StashWriteMethodArgsAndOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*Repo) (string, error)
+		want []string
+	}{
+		{"push", func(r *Repo) (string, error) { return r.StashPush(context.Background(), "save point") },
+			[]string{"stash", "push", "-u", "-m", "save point"}},
+		{"apply", func(r *Repo) (string, error) { return r.StashApply(context.Background(), "stash@{1}") },
+			[]string{"stash", "apply", "stash@{1}"}},
+		{"pop", func(r *Repo) (string, error) { return r.StashPop(context.Background(), "stash@{1}") },
+			[]string{"stash", "pop", "stash@{1}"}},
+		{"drop", func(r *Repo) (string, error) { return r.StashDrop(context.Background(), "stash@{1}") },
+			[]string{"stash", "drop", "stash@{1}"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fr := &fakeRunner{stdout: []byte("stdout"), stderr: []byte("stderr")}
+			out, err := c.call(&Repo{runner: fr})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(fr.gotArgs, c.want) {
+				t.Errorf("args = %v, want %v", fr.gotArgs, c.want)
+			}
+			if out != "stdout\nstderr" {
+				t.Errorf("output = %q, want combined stdout/stderr", out)
+			}
+		})
+	}
+}
+
+func TestRepo_StashApplyFailureReturnsOutputAndError(t *testing.T) {
+	fr := &fakeRunner{
+		stdout: []byte("Auto-merging a.go\n"),
+		stderr: []byte("CONFLICT (content): Merge conflict in a.go\n"),
+		err:    errors.New("exit status 1"),
+	}
+	out, err := (&Repo{runner: fr}).StashApply(context.Background(), "stash@{0}")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(out, "Auto-merging") || !strings.Contains(out, "CONFLICT") {
+		t.Fatalf("output = %q, want stdout and stderr", out)
+	}
+	if !strings.Contains(err.Error(), "git stash apply") {
+		t.Fatalf("error = %v, want command context", err)
 	}
 }

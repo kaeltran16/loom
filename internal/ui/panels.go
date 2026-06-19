@@ -99,6 +99,8 @@ func emptyPanelLine(p Panel) string {
 		return "No local branches"
 	case PanelCommits:
 		return "No commits"
+	case PanelStashes:
+		return "No stashes"
 	default:
 		return ""
 	}
@@ -140,6 +142,8 @@ func panelName(p Panel) string {
 		return "Branches"
 	case PanelCommits:
 		return "Commits"
+	case PanelStashes:
+		return "Stashes"
 	default:
 		return ""
 	}
@@ -186,6 +190,15 @@ func (m Model) panelRows(p Panel) []panelRow {
 		rows := make([]panelRow, len(m.commits))
 		for i, c := range m.commits {
 			rows[i] = panelRow{text: commitLine(c), kind: panelRowItem, itemIndex: i}
+		}
+		return rows
+	case PanelStashes:
+		if len(m.stashes) == 0 {
+			return []panelRow{{text: emptyPanelLine(p), kind: panelRowEmpty, itemIndex: -1}}
+		}
+		rows := make([]panelRow, len(m.stashes))
+		for i, s := range m.stashes {
+			rows[i] = panelRow{text: stashLine(s), kind: panelRowItem, itemIndex: i}
 		}
 		return rows
 	default:
@@ -392,6 +405,17 @@ func commitLine(c git.Commit) string {
 		h = h[:7]
 	}
 	return fmt.Sprintf("%s %s", h, c.Subject)
+}
+
+func stashLine(s git.Stash) string {
+	label := s.Ref
+	if s.Age != "" {
+		label += " " + s.Age
+	}
+	if s.Message != "" {
+		label += "  " + s.Message
+	}
+	return label
 }
 
 // diffKind classifies one line of diff/show output for styling.

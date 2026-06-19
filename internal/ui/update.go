@@ -29,6 +29,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commitsLoadedMsg:
 		m.commits = msg.commits
 		return m, nil
+	case stashesLoadedMsg:
+		m.stashes = msg.stashes
+		if m.cursor[PanelStashes] >= len(m.stashes) {
+			if len(m.stashes) == 0 {
+				m.cursor[PanelStashes] = 0
+			} else {
+				m.cursor[PanelStashes] = len(m.stashes) - 1
+			}
+		}
+		if m.focus == PanelStashes {
+			return m.reloadMain()
+		}
+		return m, nil
 	case amendPrefillMsg:
 		if msg.err != nil {
 			return m, nil // e.g. empty repo (no HEAD): stay put
@@ -44,6 +57,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case diffLoadedMsg:
 		// drop responses for a selection we've already navigated away from
+		if msg.seq == m.reqSeq {
+			m.viewport.SetContent(msg.text)
+			m.mainLoading = false
+		}
+		return m, nil
+	case stashShowLoadedMsg:
 		if msg.seq == m.reqSeq {
 			m.viewport.SetContent(msg.text)
 			m.mainLoading = false
@@ -89,6 +108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			loadStatus(m.ctx, m.repo),
 			loadBranches(m.ctx, m.repo),
 			loadCommits(m.ctx, m.repo),
+			loadStashes(m.ctx, m.repo),
 		)
 
 	case spinner.TickMsg:
@@ -138,6 +158,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.mode == ModeStashing {
+		switch msg.Type {
+		case tea.KeyCtrlD:
+			return m.submitStash()
+		case tea.KeyEsc:
+			m.resetStashMessage()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.stashMessage, cmd = m.stashMessage.Update(msg)
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case keyQuit, keyQuitAlt:
 		return m, tea.Quit
@@ -161,6 +194,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.reloadMain()
 	case "3":
 		m.focus = PanelCommits
+		m.mainFocused = false
+		return m.reloadMain()
+	case keyStashes:
+		m.focus = PanelStashes
 		m.mainFocused = false
 		return m.reloadMain()
 	case keyMainFocus, keyMainFocusAlt:
@@ -195,7 +232,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyStage:
 		return m.stageSelected()
+	case keyStashSave:
+		return m.openStashMessage()
+	case keyStashApply:
+		return m.applySelectedStash()
+	case keyStashPop:
+		return m.popSelectedStash()
 	case keyDiscard:
+		if m.focus == PanelStashes {
+			return m.dropSelectedStash()
+		}
 		return m.discardSelected()
 	case keyAbortMerge:
 		if !m.merging {
@@ -345,6 +391,8 @@ func (m Model) focusLen() int {
 		return len(m.branches)
 	case PanelCommits:
 		return len(m.commits)
+	case PanelStashes:
+		return len(m.stashes)
 	}
 	return 0
 }
@@ -378,6 +426,10 @@ func (m Model) loadMainForSelection() tea.Cmd {
 		if i := m.cursor[PanelBranches]; i < len(m.branches) {
 			return loadBranchLog(m.ctx, m.repo, m.branches[i].Name, m.reqSeq)
 		}
+	case PanelStashes:
+		if i := m.cursor[PanelStashes]; i < len(m.stashes) {
+			return loadStashShow(m.ctx, m.repo, m.stashes[i].Ref, m.reqSeq)
+		}
 	}
 	return nil
 }
@@ -402,6 +454,82 @@ func (m *Model) resetCommit() {
 	m.commitField = fieldSubject
 	m.amending = false
 	m.mode = ModeNormal
+}
+
+func (m Model) openStashMessage() (tea.Model, tea.Cmd) {
+	if !m.canOpenStashMessage() {
+		return m, nil
+	}
+	m.mode = ModeStashing
+	m.stashMessage.Focus()
+	return m, nil
+}
+
+func (m Model) canOpenStashMessage() bool {
+	switch m.focus {
+	case PanelStashes:
+		return true
+	case PanelFiles:
+		return len(m.files) > 0 && m.unmergedCount() == 0
+	default:
+		return false
+	}
+}
+
+func (m *Model) resetStashMessage() {
+	m.stashMessage.Reset()
+	m.stashMessage.Blur()
+	m.mode = ModeNormal
+}
+
+func (m Model) submitStash() (tea.Model, tea.Cmd) {
+	message := strings.TrimSpace(m.stashMessage.Value())
+	if message == "" {
+		return m, nil
+	}
+	m.resetStashMessage()
+	m.busy = true
+	return m, stashPush(m.ctx, m.repo, message)
+}
+
+func (m Model) applySelectedStash() (tea.Model, tea.Cmd) {
+	if m.focus != PanelStashes {
+		return m, nil
+	}
+	s, ok := m.selectedStash()
+	if !ok {
+		return m, nil
+	}
+	m.busy = true
+	return m, stashApply(m.ctx, m.repo, s.Ref)
+}
+
+func (m Model) popSelectedStash() (tea.Model, tea.Cmd) {
+	if m.focus != PanelStashes {
+		return m, nil
+	}
+	s, ok := m.selectedStash()
+	if !ok {
+		return m, nil
+	}
+	m.busy = true
+	return m, stashPop(m.ctx, m.repo, s.Ref)
+}
+
+func (m Model) dropSelectedStash() (tea.Model, tea.Cmd) {
+	if m.focus != PanelStashes {
+		return m, nil
+	}
+	s, ok := m.selectedStash()
+	if !ok {
+		return m, nil
+	}
+	m.mode = ModeConfirming
+	m.confirm = confirmReq{
+		prompt: "Drop " + s.Ref + "? [y/n]",
+		action: stashDrop(m.ctx, m.repo, s.Ref),
+	}
+	return m, nil
 }
 
 // submitCommit assembles the message and dispatches the right commit command.
